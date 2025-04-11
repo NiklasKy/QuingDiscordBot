@@ -114,6 +114,8 @@ class QuingCraftBot(commands.Bot):
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
         
+        print("Registering slash commands...")
+        
         @self.tree.command(name="qc", description="QuingCraft Verwaltungsbefehle (nur für Staff)")
         @app_commands.describe(
             action="Die Aktion (whitelist)",
@@ -142,13 +144,27 @@ class QuingCraftBot(commands.Bot):
             
             if action == "whitelist":
                 if operation == "add":
-                    response = await self.rcon.execute_command(f"send vpw add {username}")
+                    # Direkt vpw-Befehl verwenden ohne "send" Präfix
+                    response = await self.rcon.execute_command(f"vpw add {username}")
                     await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
                 elif operation == "remove":
-                    response = await self.rcon.execute_command(f"send vpw remove {username}")
+                    # Direkt vpw-Befehl verwenden ohne "send" Präfix
+                    response = await self.rcon.execute_command(f"vpw remove {username}")
                     await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
         
+        # Explizit für die spezifische Guild synchronisieren
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if guild_id:
+            print(f"Syncing commands to guild ID: {guild_id}")
+            guild = discord.Object(id=int(guild_id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print("Guild command sync complete!")
+        
+        # Global sync als Backup
+        print("Starting global command sync...")
         await self.tree.sync()
+        print("Global command sync complete!")
     
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
@@ -188,7 +204,16 @@ class QuingCraftBot(commands.Bot):
     async def on_ready(self) -> None:
         """Handle bot ready event."""
         print(f"Logged in as {self.user.name} ({self.user.id})")
+        print(f"Bot is a member of {len(self.guilds)} guilds")
+        
+        for guild in self.guilds:
+            print(f" - {guild.name} (ID: {guild.id})")
+        
         await self.create_whitelist_message()
+        
+        # Nachricht über Command-Verfügbarkeit
+        print("Commands should now be available in Discord!")
+        print(f"Application ID: {self.user.id}")
     
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
