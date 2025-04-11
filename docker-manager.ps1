@@ -100,7 +100,16 @@ function Restore-Postgres {
     
     if ($latestBackup) {
         Write-Host "Wiederherstelle $DbName aus $($latestBackup.Name)..." -ForegroundColor Yellow
-        docker-compose up -d $ContainerName
+        
+        # Konvertiere Container-Namen zu Service-Namen für docker-compose
+        $serviceName = switch ($ContainerName) {
+            "luckperms-postgres" { "luckperms-db" }
+            "husksync-postgres" { "husksync-db" }
+            "quingcraft-postgres" { "quingcraft-db" }
+            default { $ContainerName }
+        }
+        
+        docker-compose up -d $serviceName
         Start-Sleep -Seconds 10
         Get-Content $latestBackup.FullName | docker exec -i $ContainerName psql -U $User -d $DbName
         
@@ -111,7 +120,15 @@ function Restore-Postgres {
         }
     } else {
         Write-Host "Kein Backup für $DbName gefunden. Starte mit leerer Datenbank." -ForegroundColor Yellow
-        docker-compose up -d $ContainerName
+        
+        # Konvertiere Container-Namen zu Service-Namen für docker-compose
+        $serviceName = switch ($ContainerName) {
+            "luckperms-postgres" { "luckperms-db" }
+            "husksync-postgres" { "husksync-db" }
+            "quingcraft-postgres" { "quingcraft-db" }
+            default { $ContainerName }
+        }
+        docker-compose up -d $serviceName
     }
 }
 

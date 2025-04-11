@@ -175,20 +175,21 @@ class QuingCraftBot(commands.Bot):
             # Get the request from database
             request = self.db.get_pending_request(user_id)
             if request:
-                username = request[1]
-                if await self.rcon.whitelist_add(username):
+                # Get the Minecraft username from the request
+                minecraft_username = request[2]  # Index 2 contains the minecraft_username
+                if await self.rcon.whitelist_add(minecraft_username):
                     self.db.approve_request(user_id)
                     del self.pending_requests[user_id]
                     
                     # Send success message to user
                     user = await self.fetch_user(user_id)
                     if user:
-                        await user.send(WHITELIST_APPROVED.format(username=username))
+                        await user.send(WHITELIST_APPROVED.format(username=minecraft_username))
         elif emoji == "❌":
             # Get the request from database
             request = self.db.get_pending_request(user_id)
             if request:
-                username = request[1]
+                minecraft_username = request[2]  # Index 2 contains the minecraft_username
                 self.db.reject_request(user_id)
                 del self.pending_requests[user_id]
                 
