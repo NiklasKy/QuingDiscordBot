@@ -82,6 +82,38 @@ class Database:
             print(f"Database error: {e}")
             return False
     
+    def approve_request(self, discord_id: int) -> bool:
+        """Approve a whitelist request."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE whitelist_requests
+                    SET status = 'approved'
+                    WHERE discord_id = %s AND status = 'pending'
+                    RETURNING id
+                """, (discord_id,))
+                self.conn.commit()
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Database error: {e}")
+            return False
+
+    def reject_request(self, discord_id: int) -> bool:
+        """Reject a whitelist request."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE whitelist_requests
+                    SET status = 'rejected'
+                    WHERE discord_id = %s AND status = 'pending'
+                    RETURNING id
+                """, (discord_id,))
+                self.conn.commit()
+                return cur.fetchone() is not None
+        except Exception as e:
+            print(f"Database error: {e}")
+            return False
+    
     def close(self) -> None:
         """Close the database connection."""
         self.conn.close() 
