@@ -8,6 +8,7 @@ from discord import app_commands
 import aiohttp
 import asyncio
 import traceback
+import sys
 from typing import Optional, Literal, Dict, Any
 from dotenv import load_dotenv
 
@@ -98,8 +99,13 @@ class QuingCraftBot(commands.Bot):
     
     def __init__(self) -> None:
         """Initialize the bot with necessary components."""
-        intents = discord.Intents.default()
-        intents.message_content = True
+        intents = discord.Intents.all()  # Verwende alle Intents
+        # intents = discord.Intents.default()
+        # intents.message_content = True
+        # Stelle sicher, dass wir Reaktions-Intents haben
+        # intents.reactions = True
+        # intents.guild_messages = True
+        # intents.guild_reactions = True
         
         super().__init__(command_prefix="!", intents=intents)
         self.db = Database()
@@ -112,6 +118,9 @@ class QuingCraftBot(commands.Bot):
             int(os.getenv("ADMIN_ROLE_ID", "0")),
             int(os.getenv("MOD_ROLE_ID", "0"))
         ]
+        
+        # Debug-Nachricht zur Initialisierung
+        print("DEBUG: Bot initialized with all intents")
     
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
@@ -219,6 +228,118 @@ class QuingCraftBot(commands.Bot):
         # Nachricht über Command-Verfügbarkeit
         print("Commands should now be available in Discord!")
         print(f"Application ID: {self.user.id}")
+        
+        # Debug: Liste alle Event-Listener auf
+        print("\nDEBUG: Registered event listeners:")
+        for listener in self._listeners:
+            print(f" - {listener}")
+    
+    # Direkte Event-Listener für Reaktionen
+    
+    @commands.Cog.listener()
+    async def on_reaction_add(self, reaction, user):
+        """Handle direct reaction add event."""
+        # Ignoriere Bot-eigene Reaktionen
+        if user.id == self.user.id:
+            return
+        
+        print(f"DEBUG DIRECT: Reaction added: {reaction.emoji} by user {user.name} ({user.id}) on message {reaction.message.id}")
+        
+        # Prüfe, ob es ein Whitelist-Request ist
+        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+        if reaction.message.channel.id == mod_channel_id:
+            print(f"DEBUG DIRECT: Reaction is in mod channel")
+            
+            for req_user_id, req_message_id in self.pending_requests.items():
+                if req_message_id == reaction.message.id:
+                    print(f"DEBUG DIRECT: Found matching request from user {req_user_id}")
+                    
+                    # Führe die gleichen Aktionen aus wie in _process_whitelist_reaction
+                    if str(reaction.emoji) == "✅":
+                        print(f"DEBUG DIRECT: Processing approval via direct listener")
+                        await self._approve_whitelist_request(req_user_id, reaction.message.channel.id)
+                    elif str(reaction.emoji) == "❌":
+                        print(f"DEBUG DIRECT: Processing rejection via direct listener")
+                        await self._reject_whitelist_request(req_user_id)
+    
+    # Füge eine spezielle Methode hinzu, um Reaktionen manuell abzurufen und zu verarbeiten
+    async def check_reactions(self, message_id: int) -> None:
+        """Manually check reactions on a message."""
+        try:
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            channel = self.get_channel(mod_channel_id)
+            if not channel:
+                print(f"ERROR: Could not get mod channel {mod_channel_id}")
+                return
+            
+            message = await channel.fetch_message(message_id)
+            if not message:
+                print(f"ERROR: Could not fetch message {message_id}")
+                return
+            
+            print(f"DEBUG: Checking reactions on message {message_id}")
+            print(f"DEBUG: Message has {len(message.reactions)} reactions")
+            
+            for reaction in message.reactions:
+                print(f"DEBUG: Found reaction {reaction.emoji} with count {reaction.count}")
+                
+                # Finde den Benutzer, der hinter dieser Nachricht steht
+                user_id = None
+                for req_user_id, req_message_id in self.pending_requests.items():
+                    if req_message_id == message_id:
+                        user_id = req_user_id
+                        break
+                
+                if not user_id:
+                    print(f"DEBUG: Could not find user for message {message_id}")
+                    continue
+                
+                print(f"DEBUG: Request is from user {user_id}")
+                
+                # Verarbeite Reaktionen
+                if str(reaction.emoji) == "✅":
+                    print(f"DEBUG: Processing approval via manual check")
+                    await self._approve_whitelist_request(user_id, channel.id)
+                elif str(reaction.emoji) == "❌":
+                    print(f"DEBUG: Processing rejection via manual check")
+                    await self._reject_whitelist_request(user_id)
+        except Exception as e:
+            print(f"ERROR in check_reactions: {str(e)}")
+            traceback.print_exc()
+    
+    # Spezielle Hilfsmethode für manuelles Debugging über eine Slash-Command
+    @commands.Cog.listener()
+    async def on_message(self, message):
+        """Listen for special debug commands."""
+        if message.author.bot:
+            return
+        
+        # Einfacher Debug-Befehl
+        if message.content.startswith("!debug-reactions"):
+            print("DEBUG: Debug command received")
+            
+            # Extrahiere die Nachrichten-ID, falls angegeben
+            parts = message.content.split()
+            if len(parts) > 1:
+                try:
+                    message_id = int(parts[1])
+                    await message.channel.send(f"Checking reactions on message {message_id}...")
+                    await self.check_reactions(message_id)
+                except ValueError:
+                    await message.channel.send("Invalid message ID. Please provide a valid number.")
+            else:
+                await message.channel.send("Please provide a message ID to check.")
+        
+        # Befehl zum Auflisten aller ausstehenden Anfragen
+        elif message.content == "!debug-requests":
+            requests_info = "Current pending requests:\n"
+            for user_id, msg_id in self.pending_requests.items():
+                requests_info += f"- User {user_id}: Message {msg_id}\n"
+            
+            await message.channel.send(requests_info if self.pending_requests else "No pending requests.")
+        
+        # Normales Command-Processing fortsetzen
+        await self.process_commands(message)
     
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
