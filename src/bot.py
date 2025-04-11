@@ -238,26 +238,28 @@ class QuingCraftBot(commands.Bot):
         
         emoji = str(payload.emoji)
         if emoji == "✅":
-            # Get the request from database
-            request = self.db.get_pending_request(user_id)
-            if request:
-                # Get the Minecraft username from the request
-                minecraft_username = request[2]  # Index 2 contains the minecraft_username
+            # Approve the request and add to whitelist
+            success, minecraft_username = self.db.approve_request(user_id)
+            if success and minecraft_username:
+                # Add to the whitelist via RCON
                 if await self.rcon.whitelist_add(minecraft_username):
-                    self.db.approve_request(user_id)
-                    del self.pending_requests[user_id]
+                    # Remove from pending requests
+                    if user_id in self.pending_requests:
+                        del self.pending_requests[user_id]
                     
                     # Send success message to user
                     user = await self.fetch_user(user_id)
                     if user:
                         await user.send(WHITELIST_APPROVED.format(username=minecraft_username))
+                else:
+                    print(f"RCON whitelist add failed for {minecraft_username}")
         elif emoji == "❌":
-            # Get the request from database
-            request = self.db.get_pending_request(user_id)
-            if request:
-                minecraft_username = request[2]  # Index 2 contains the minecraft_username
-                self.db.reject_request(user_id)
-                del self.pending_requests[user_id]
+            # Reject the request
+            success, minecraft_username = self.db.reject_request(user_id)
+            if success:
+                # Remove from pending requests
+                if user_id in self.pending_requests:
+                    del self.pending_requests[user_id]
                 
                 # Send rejection message to user
                 user = await self.fetch_user(user_id)
