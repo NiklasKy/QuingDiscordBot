@@ -104,9 +104,50 @@ class QuingCraftBot(commands.Bot):
         self.rcon = RconHandler()
         self.pending_requests = {}
         self.whitelist_message_id = None
+        
+        # Staff role IDs
+        self.staff_roles = [
+            int(os.getenv("ADMIN_ROLE_ID", "0")),
+            int(os.getenv("MOD_ROLE_ID", "0"))
+        ]
     
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
+        
+        @self.tree.command(name="qc", description="QuingCraft Verwaltungsbefehle (nur für Staff)")
+        @app_commands.describe(
+            action="Die Aktion (whitelist)",
+            operation="Die Operation (add/remove)",
+            username="Minecraft Benutzername"
+        )
+        @app_commands.choices(
+            action=[
+                app_commands.Choice(name="whitelist", value="whitelist")
+            ],
+            operation=[
+                app_commands.Choice(name="add", value="add"),
+                app_commands.Choice(name="remove", value="remove")
+            ]
+        )
+        async def qc_command(
+            interaction: discord.Interaction, 
+            action: str,
+            operation: str,
+            username: str
+        ):
+            # Check if user has staff role
+            if not any(role.id in self.staff_roles for role in interaction.user.roles):
+                await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl zu verwenden.", ephemeral=True)
+                return
+            
+            if action == "whitelist":
+                if operation == "add":
+                    response = await self.rcon.execute_command(f"vpw add {username}")
+                    await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+                elif operation == "remove":
+                    response = await self.rcon.execute_command(f"vpw remove {username}")
+                    await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+        
         await self.tree.sync()
     
     async def create_whitelist_message(self) -> None:

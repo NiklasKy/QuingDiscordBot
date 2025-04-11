@@ -29,9 +29,9 @@ class RconHandler:
         try:
             logger.info(f"Attempting to add {username} to whitelist")
             self.rcon.connect()
-            response = self.rcon.command(f"whitelist add {username}")
+            response = self.rcon.command(f"vpw add {username}")
             logger.info(f"RCON response: {response}")
-            return "Added" in response
+            return "added" in response.lower()
         except ConnectionRefusedError:
             logger.error("RCON connection refused. Is the Minecraft server running?")
             return False
@@ -52,9 +52,9 @@ class RconHandler:
         try:
             logger.info(f"Attempting to remove {username} from whitelist")
             self.rcon.connect()
-            response = self.rcon.command(f"whitelist remove {username}")
+            response = self.rcon.command(f"vpw remove {username}")
             logger.info(f"RCON response: {response}")
-            return "Removed" in response
+            return "removed" in response.lower()
         except ConnectionRefusedError:
             logger.error("RCON connection refused. Is the Minecraft server running?")
             return False
@@ -64,6 +64,29 @@ class RconHandler:
         except Exception as e:
             logger.error(f"RCON error: {str(e)}")
             return False
+        finally:
+            try:
+                self.rcon.disconnect()
+            except:
+                pass
+
+    async def execute_command(self, command: str) -> str:
+        """Execute a custom RCON command."""
+        try:
+            logger.info(f"Executing command: {command}")
+            self.rcon.connect()
+            response = self.rcon.command(command)
+            logger.info(f"RCON response: {response}")
+            return response
+        except ConnectionRefusedError:
+            logger.error("RCON connection refused. Is the Minecraft server running?")
+            return "Error: Connection refused"
+        except TimeoutError:
+            logger.error("RCON connection timed out. Is the server reachable?")
+            return "Error: Connection timeout"
+        except Exception as e:
+            logger.error(f"RCON error: {str(e)}")
+            return f"Error: {str(e)}"
         finally:
             try:
                 self.rcon.disconnect()
