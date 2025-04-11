@@ -6,7 +6,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import aiohttp
-from typing import Optional
+from typing import Optional, Literal
 from dotenv import load_dotenv
 
 from .database import Database
@@ -116,41 +116,44 @@ class QuingCraftBot(commands.Bot):
         
         print("Registering slash commands...")
         
-        @self.tree.command(name="qc", description="QuingCraft Verwaltungsbefehle (nur für Staff)")
-        @app_commands.describe(
-            action="Die Aktion (whitelist)",
-            operation="Die Operation (add/remove)",
-            username="Minecraft Benutzername"
-        )
-        @app_commands.choices(
-            action=[
-                app_commands.Choice(name="whitelist", value="whitelist")
-            ],
-            operation=[
-                app_commands.Choice(name="add", value="add"),
-                app_commands.Choice(name="remove", value="remove")
-            ]
-        )
-        async def qc_command(
-            interaction: discord.Interaction, 
-            action: str,
-            operation: str,
-            username: str
-        ):
+        # Erstelle eine Command Group für /qc
+        qc_group = app_commands.Group(name="qc", description="QuingCraft Verwaltungsbefehle (nur für Staff)")
+        
+        # Erstelle eine Subgroup für /qc whitelist
+        whitelist_group = app_commands.Group(name="whitelist", description="Whitelist-Verwaltungsbefehle", parent=qc_group)
+        
+        @whitelist_group.command(name="add", description="Fügt einen Spieler zur Whitelist hinzu")
+        @app_commands.describe(username="Minecraft Benutzername")
+        async def whitelist_add(interaction: discord.Interaction, username: str):
             # Check if user has staff role
             if not any(role.id in self.staff_roles for role in interaction.user.roles):
                 await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl zu verwenden.", ephemeral=True)
                 return
             
-            if action == "whitelist":
-                if operation == "add":
-                    # Direkt vpw-Befehl verwenden ohne "send" Präfix
-                    response = await self.rcon.execute_command(f"vpw add {username}")
-                    await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
-                elif operation == "remove":
-                    # Direkt vpw-Befehl verwenden ohne "send" Präfix
-                    response = await self.rcon.execute_command(f"vpw remove {username}")
-                    await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+            # Direkt vpw-Befehl verwenden
+            response = await self.rcon.execute_command(f"vpw add {username}")
+            await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+        
+        @whitelist_group.command(name="remove", description="Entfernt einen Spieler von der Whitelist")
+        @app_commands.describe(username="Minecraft Benutzername")
+        async def whitelist_remove(interaction: discord.Interaction, username: str):
+            # Check if user has staff role
+            if not any(role.id in self.staff_roles for role in interaction.user.roles):
+                await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl zu verwenden.", ephemeral=True)
+                return
+            
+            # Direkt vpw-Befehl verwenden
+            response = await self.rcon.execute_command(f"vpw remove {username}")
+            await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+        
+        # Füge die Command-Gruppen zum Command Tree hinzu
+        self.tree.add_command(qc_group)
+        
+        # Entferne den alten qc-Command, falls er existiert
+        for cmd in self.tree.get_commands():
+            if cmd.name == "qc" and not isinstance(cmd, app_commands.Group):
+                self.tree.remove_command(cmd)
+                print("Removed old qc command")
         
         # Explizit für die spezifische Guild synchronisieren
         guild_id = os.getenv("DISCORD_GUILD_ID")
@@ -273,7 +276,6 @@ class QuingCraftBot(commands.Bot):
         
         if emoji == "✅":
             print(f"Approving request for user {user_id}")
-            # Approve the request and add to whitelist
             
             try:
                 # Holen der Anfrage direkt
@@ -285,9 +287,19 @@ class QuingCraftBot(commands.Bot):
                 minecraft_username = request[2]  # Index 2 enthält den Minecraft-Benutzernamen
                 print(f"Found pending request for {minecraft_username}")
                 
-                # Manuell den Status ändern
-                if await self.rcon.whitelist_add(minecraft_username):
+                # Versuchen, den Spieler zur Whitelist hinzuzufügen
+                add_success = await self.rcon.whitelist_add(minecraft_username)
+                
+                if add_success:
                     print(f"Added {minecraft_username} to whitelist via RCON")
+                    
+                    # Überprüfen, ob der Spieler tatsächlich auf der Whitelist steht
+                    is_whitelisted = await self.rcon.whitelist_check(minecraft_username)
+                    if is_whitelisted:
+                        print(f"Confirmed {minecraft_username} is on the whitelist")
+                    else:
+                        print(f"Warning: {minecraft_username} appears not to be on the whitelist despite successful add command")
+                    
                     # Update database status
                     success = self.db.update_request_status(request[0], "approved")
                     if success:
@@ -306,13 +318,17 @@ class QuingCraftBot(commands.Bot):
                         await user.send(WHITELIST_APPROVED.format(username=minecraft_username))
                         print(f"Sent approval message to user {user_id}")
                 else:
-                    print(f"RCON whitelist add failed for {minecraft_username}")
+                    print(f"Failed to add {minecraft_username} to whitelist")
+                    
+                    # Benachrichtige den Moderator über das Problem
+                    channel = self.get_channel(payload.channel_id)
+                    if channel:
+                        await channel.send(f"Fehler beim Hinzufügen von {minecraft_username} zur Whitelist. Bitte versuchen Sie es manuell oder kontaktieren Sie den Administrator.", delete_after=30)
             except Exception as e:
                 print(f"Error during approval process: {e}")
         
         elif emoji == "❌":
             print(f"Rejecting request for user {user_id}")
-            # Reject the request
             
             try:
                 # Holen der Anfrage direkt
