@@ -5,8 +5,8 @@ from dotenv import load_dotenv
 def test_rcon_connection():
     load_dotenv()
     
-    # RCON-Verbindungsdaten aus der .env-Datei laden
-    host = os.getenv("RCON_HOST")
+    # RCON-Verbindungsdaten mit Host-IP für Docker
+    host = "host.docker.internal"  # Spezielle DNS für den Host aus Docker
     port = int(os.getenv("RCON_PORT", "25575"))
     password = os.getenv("RCON_PASSWORD")
     
