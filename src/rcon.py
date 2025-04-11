@@ -29,7 +29,7 @@ class RconHandler:
         try:
             logger.info(f"Attempting to add {username} to whitelist")
             self.rcon.connect()
-            response = self.rcon.command(f"vpw add {username}")
+            response = self.rcon.command(f"glist-send lobby:vpw add {username}")
             logger.info(f"RCON response: {response}")
             return "added" in response.lower()
         except ConnectionRefusedError:
@@ -52,7 +52,7 @@ class RconHandler:
         try:
             logger.info(f"Attempting to remove {username} from whitelist")
             self.rcon.connect()
-            response = self.rcon.command(f"vpw remove {username}")
+            response = self.rcon.command(f"glist-send lobby:vpw remove {username}")
             logger.info(f"RCON response: {response}")
             return "removed" in response.lower()
         except ConnectionRefusedError:
@@ -75,6 +75,9 @@ class RconHandler:
         try:
             logger.info(f"Executing command: {command}")
             self.rcon.connect()
+            # Füge 'glist-send lobby:' vor dem Befehl hinzu, wenn es nicht bereits vorhanden ist
+            if not command.startswith("glist-send lobby:"):
+                command = f"glist-send lobby:{command}"
             response = self.rcon.command(command)
             logger.info(f"RCON response: {response}")
             return response

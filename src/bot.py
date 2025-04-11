@@ -142,10 +142,10 @@ class QuingCraftBot(commands.Bot):
             
             if action == "whitelist":
                 if operation == "add":
-                    response = await self.rcon.execute_command(f"vpw add {username}")
+                    response = await self.rcon.execute_command(f"send vpw add {username}")
                     await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
                 elif operation == "remove":
-                    response = await self.rcon.execute_command(f"vpw remove {username}")
+                    response = await self.rcon.execute_command(f"send vpw remove {username}")
                     await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
         
         await self.tree.sync()
