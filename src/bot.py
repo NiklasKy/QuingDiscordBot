@@ -219,52 +219,127 @@ class QuingCraftBot(commands.Bot):
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """Handle reactions on whitelist requests."""
         if payload.user_id == self.user.id:
+            print(f"Ignoring bot's own reaction")
             return
         
-        if payload.channel_id != int(os.getenv("MOD_CHANNEL_ID")):
+        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+        if payload.channel_id != mod_channel_id:
+            print(f"Reaction not in mod channel. Got {payload.channel_id}, expected {mod_channel_id}")
             return
+        
+        print(f"Reaction detected: {payload.emoji} on message {payload.message_id}")
         
         message_id = payload.message_id
         user_id = None
         
         # Find the user who made the request
+        print(f"Current pending requests: {self.pending_requests}")
         for req_user_id, req_message_id in self.pending_requests.items():
             if req_message_id == message_id:
                 user_id = req_user_id
+                print(f"Found matching request from user ID: {user_id}")
                 break
         
         if not user_id:
-            return
+            print(f"No pending request found for message ID: {message_id}")
+            
+            # Versuche, die Nachricht direkt zu laden und zu prüfen
+            try:
+                channel = self.get_channel(payload.channel_id)
+                if channel:
+                    message = await channel.fetch_message(message_id)
+                    print(f"Message content: {message.embeds[0].description if message.embeds else 'No embeds'}")
+                    
+                    # Versuche, die Benutzer-ID aus der Beschreibung zu extrahieren
+                    if message.embeds and "discord_user" in message.embeds[0].description:
+                        description = message.embeds[0].description
+                        # Typisches Format: "Discord User: <@242292116833697792>"
+                        import re
+                        match = re.search(r"<@(\d+)>", description)
+                        if match:
+                            user_id = int(match.group(1))
+                            print(f"Extracted user ID from embed: {user_id}")
+                            
+                            # Füge die Nachricht zum Tracking hinzu
+                            self.pending_requests[user_id] = message_id
+            except Exception as e:
+                print(f"Error trying to fetch message: {e}")
+            
+            if not user_id:
+                return
         
         emoji = str(payload.emoji)
+        print(f"Processing reaction {emoji} for user {user_id}")
+        
         if emoji == "✅":
+            print(f"Approving request for user {user_id}")
             # Approve the request and add to whitelist
-            success, minecraft_username = self.db.approve_request(user_id)
-            if success and minecraft_username:
-                # Add to the whitelist via RCON
+            
+            try:
+                # Holen der Anfrage direkt
+                request = self.db.get_pending_request(user_id)
+                if not request:
+                    print(f"No pending request found in database for user {user_id}")
+                    return
+                
+                minecraft_username = request[2]  # Index 2 enthält den Minecraft-Benutzernamen
+                print(f"Found pending request for {minecraft_username}")
+                
+                # Manuell den Status ändern
                 if await self.rcon.whitelist_add(minecraft_username):
+                    print(f"Added {minecraft_username} to whitelist via RCON")
+                    # Update database status
+                    success = self.db.update_request_status(request[0], "approved")
+                    if success:
+                        print(f"Updated database status to approved")
+                    else:
+                        print(f"Failed to update database status")
+                    
                     # Remove from pending requests
                     if user_id in self.pending_requests:
                         del self.pending_requests[user_id]
+                        print(f"Removed user {user_id} from pending_requests")
                     
                     # Send success message to user
                     user = await self.fetch_user(user_id)
                     if user:
                         await user.send(WHITELIST_APPROVED.format(username=minecraft_username))
+                        print(f"Sent approval message to user {user_id}")
                 else:
                     print(f"RCON whitelist add failed for {minecraft_username}")
+            except Exception as e:
+                print(f"Error during approval process: {e}")
+        
         elif emoji == "❌":
+            print(f"Rejecting request for user {user_id}")
             # Reject the request
-            success, minecraft_username = self.db.reject_request(user_id)
-            if success:
+            
+            try:
+                # Holen der Anfrage direkt
+                request = self.db.get_pending_request(user_id)
+                if not request:
+                    print(f"No pending request found in database for user {user_id}")
+                    return
+                
+                # Manuell den Status ändern
+                success = self.db.update_request_status(request[0], "rejected")
+                if success:
+                    print(f"Updated database status to rejected")
+                else:
+                    print(f"Failed to update database status")
+                
                 # Remove from pending requests
                 if user_id in self.pending_requests:
                     del self.pending_requests[user_id]
+                    print(f"Removed user {user_id} from pending_requests")
                 
                 # Send rejection message to user
                 user = await self.fetch_user(user_id)
                 if user:
                     await user.send(WHITELIST_REJECTED)
+                    print(f"Sent rejection message to user {user_id}")
+            except Exception as e:
+                print(f"Error during rejection process: {e}")
 
 def main() -> None:
     """Start the bot."""
