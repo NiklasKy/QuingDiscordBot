@@ -33,7 +33,17 @@ class RconHandler:
             # Direkter vpw-Befehl ohne glist-send lobby:
             response = self.rcon.command(f"vpw add {username}")
             logger.info(f"RCON response: {response}")
-            return "added" in response.lower()
+            
+            # Prüfe auf verschiedene erfolgreiche Antwortmuster
+            success_patterns = [
+                "added", 
+                "fetching uuid",
+                "player is offline, fetching",
+                "added to whitelist"
+            ]
+            
+            # Wenn einer der Erfolgs-Strings in der Antwort enthalten ist
+            return any(pattern in response.lower() for pattern in success_patterns)
         except ConnectionRefusedError:
             logger.error("RCON connection refused. Is the Minecraft server running?")
             return False
@@ -57,7 +67,17 @@ class RconHandler:
             # Direkter vpw-Befehl ohne glist-send lobby:
             response = self.rcon.command(f"vpw remove {username}")
             logger.info(f"RCON response: {response}")
-            return "removed" in response.lower()
+            
+            # Prüfe auf verschiedene erfolgreiche Antwortmuster
+            success_patterns = [
+                "removed", 
+                "fetching uuid",
+                "player is offline, fetching",
+                "removed from whitelist"
+            ]
+            
+            # Wenn einer der Erfolgs-Strings in der Antwort enthalten ist
+            return any(pattern in response.lower() for pattern in success_patterns)
         except ConnectionRefusedError:
             logger.error("RCON connection refused. Is the Minecraft server running?")
             return False
