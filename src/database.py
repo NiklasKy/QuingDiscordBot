@@ -22,6 +22,7 @@ class Database:
             password=os.getenv("DB_PASSWORD")
         )
         self._create_tables()
+        self._update_schema()
     
     def _create_tables(self) -> None:
         """Create necessary tables if they don't exist."""
@@ -32,39 +33,89 @@ class Database:
                     discord_id BIGINT NOT NULL,
                     minecraft_username VARCHAR(16) NOT NULL,
                     status VARCHAR(10) NOT NULL DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(discord_id, status)
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """)
             self.conn.commit()
+    
+    def _update_schema(self) -> None:
+        """Update database schema if needed."""
+        try:
+            # Entfernen der Unique Constraint, falls vorhanden
+            with self.conn.cursor() as cur:
+                # Prüfen, ob die Constraint existiert
+                cur.execute("""
+                    SELECT 1 FROM pg_constraint 
+                    WHERE conname = 'whitelist_requests_discord_id_status_key'
+                """)
+                if cur.fetchone():
+                    # Constraint existiert, entfernen
+                    cur.execute("""
+                        ALTER TABLE whitelist_requests
+                        DROP CONSTRAINT whitelist_requests_discord_id_status_key
+                    """)
+                    print("Removed unique constraint on discord_id and status")
+                    
+                # Hinzufügen einer anderen sinnvollen Constraint: Minecraft-Namen müssen eindeutig sein für pending/approved
+                cur.execute("""
+                    CREATE UNIQUE INDEX IF NOT EXISTS whitelist_requests_minecraft_username_unique_status
+                    ON whitelist_requests (minecraft_username, status)
+                    WHERE status = 'approved' OR status = 'pending'
+                """)
+                self.conn.commit()
+                print("Updated database schema successfully")
+        except Exception as e:
+            print(f"Error updating schema: {e}")
+            self.conn.rollback()
     
     def add_whitelist_request(self, discord_id: int, minecraft_username: str) -> bool:
         """Add a new whitelist request to the database."""
         try:
             with self.conn.cursor() as cur:
+                # Prüfen, ob der Spieler bereits auf der Whitelist steht (approved status)
+                cur.execute("""
+                    SELECT id FROM whitelist_requests
+                    WHERE minecraft_username = %s AND status = 'approved'
+                """, (minecraft_username,))
+                if cur.fetchone():
+                    print(f"Player {minecraft_username} already on whitelist")
+                    return False
+                
+                # Prüfen, ob ein ausstehender Antrag für diesen Benutzer existiert
+                cur.execute("""
+                    SELECT id FROM whitelist_requests
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (discord_id,))
+                if cur.fetchone():
+                    print(f"User {discord_id} already has a pending request")
+                    return False
+                
+                # Neuen Antrag hinzufügen
                 cur.execute("""
                     INSERT INTO whitelist_requests (discord_id, minecraft_username, status)
                     VALUES (%s, %s, 'pending')
-                    ON CONFLICT (discord_id, status) DO NOTHING
                     RETURNING id
                 """, (discord_id, minecraft_username))
                 self.conn.commit()
-                return cur.fetchone() is not None
+                result = cur.fetchone()
+                return result is not None
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"Database error in add_whitelist_request: {e}")
+            self.conn.rollback()
             return False
     
-    def get_pending_request(self, discord_id: int) -> Optional[dict]:
+    def get_pending_request(self, discord_id: int) -> Optional[list]:
         """Get a pending whitelist request for a user."""
         try:
-            with self.conn.cursor(cursor_factory=DictCursor) as cur:
+            with self.conn.cursor() as cur:
                 cur.execute("""
                     SELECT * FROM whitelist_requests
                     WHERE discord_id = %s AND status = 'pending'
                 """, (discord_id,))
                 return cur.fetchone()
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"Database error in get_pending_request: {e}")
+            self.conn.rollback()
             return None
     
     def update_request_status(self, request_id: int, status: str) -> bool:
@@ -79,39 +130,86 @@ class Database:
                 self.conn.commit()
                 return cur.rowcount > 0
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"Database error in update_request_status: {e}")
+            self.conn.rollback()
             return False
     
     def approve_request(self, discord_id: int) -> bool:
         """Approve a whitelist request."""
         try:
             with self.conn.cursor() as cur:
+                # Holen des ausstehenden Antrags
+                cur.execute("""
+                    SELECT id, minecraft_username FROM whitelist_requests
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (discord_id,))
+                request = cur.fetchone()
+                
+                if not request:
+                    print(f"No pending request found for user {discord_id}")
+                    return False
+                
+                request_id, minecraft_username = request
+                
+                # Prüfen, ob der Minecraft-Name bereits auf der Whitelist steht
+                cur.execute("""
+                    SELECT id FROM whitelist_requests
+                    WHERE minecraft_username = %s AND status = 'approved' AND id != %s
+                """, (minecraft_username, request_id))
+                
+                if cur.fetchone():
+                    # Name ist bereits auf der Whitelist, setzen wir diesen Antrag auf "duplicate"
+                    cur.execute("""
+                        UPDATE whitelist_requests
+                        SET status = 'duplicate'
+                        WHERE id = %s
+                    """, (request_id,))
+                    self.conn.commit()
+                    print(f"Set request to duplicate for {minecraft_username}")
+                    return True
+                
+                # Aktualisieren des Status auf "approved"
                 cur.execute("""
                     UPDATE whitelist_requests
                     SET status = 'approved'
-                    WHERE discord_id = %s AND status = 'pending'
-                    RETURNING id
-                """, (discord_id,))
+                    WHERE id = %s
+                """, (request_id,))
                 self.conn.commit()
-                return cur.fetchone() is not None
+                print(f"Approved request for {minecraft_username}")
+                return True
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"Database error in approve_request: {e}")
+            self.conn.rollback()
             return False
 
     def reject_request(self, discord_id: int) -> bool:
         """Reject a whitelist request."""
         try:
             with self.conn.cursor() as cur:
+                # Holen der ID des ausstehenden Antrags
+                cur.execute("""
+                    SELECT id FROM whitelist_requests
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (discord_id,))
+                request = cur.fetchone()
+                
+                if not request:
+                    print(f"No pending request found for user {discord_id}")
+                    return False
+                
+                request_id = request[0]
+                
                 cur.execute("""
                     UPDATE whitelist_requests
                     SET status = 'rejected'
-                    WHERE discord_id = %s AND status = 'pending'
-                    RETURNING id
-                """, (discord_id,))
+                    WHERE id = %s
+                """, (request_id,))
                 self.conn.commit()
-                return cur.fetchone() is not None
+                print(f"Rejected request ID {request_id}")
+                return True
         except Exception as e:
-            print(f"Database error: {e}")
+            print(f"Database error in reject_request: {e}")
+            self.conn.rollback()
             return False
     
     def close(self) -> None:
