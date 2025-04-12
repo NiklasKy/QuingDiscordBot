@@ -310,9 +310,43 @@ class QuingCraftBot(commands.Bot):
         
         # Debug message for initialization
         print("DEBUG: Bot initialized with all intents")
+    
+    async def setup_hook(self) -> None:
+        """Set up the bot's commands and sync them."""
+        
+        print("Setting up command cogs...")
         
         # Create the task for cleaning up duplicate commands
-        self.command_cleanup_task = self.loop.create_task(self.whitelist_command_cleanup())
+        self.loop.create_task(self.whitelist_command_cleanup())
+        
+        # Add cogs
+        await self.add_cog(AdminCommands(self))
+        await self.add_cog(DebugCommands(self))
+        
+        # Add command error handler
+        @self.event
+        async def on_command_error(ctx, error):
+            if isinstance(error, commands.CommandNotFound):
+                return
+            elif isinstance(error, commands.CheckFailure):
+                await ctx.send(ERROR_PERMISSION_DENIED, delete_after=5)
+            else:
+                await ctx.send(f"{ERROR_PROCESSING} {str(error)}", delete_after=10)
+                print(f"Command error: {error}")
+        
+        # Sync for the specific guild
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if guild_id:
+            print(f"Syncing commands to guild ID: {guild_id}")
+            guild = discord.Object(id=int(guild_id))
+            self.tree.copy_global_to(guild=guild)
+            await self.tree.sync(guild=guild)
+            print("Guild command sync complete!")
+        
+        # Global sync as backup
+        print("Starting global command sync...")
+        await self.tree.sync()
+        print("Global command sync complete!")
     
     async def whitelist_command_cleanup(self) -> None:
         """Remove duplicate whitelist commands to prevent confusion."""
@@ -340,29 +374,6 @@ class QuingCraftBot(commands.Bot):
         print("Syncing command tree to apply cleanup changes...")
         await self.tree.sync()
         print("Command cleanup complete!")
-    
-    async def setup_hook(self) -> None:
-        """Set up the bot's commands and sync them."""
-        
-        print("Setting up command cogs...")
-        
-        # Add cogs
-        await self.add_cog(AdminCommands(self))
-        await self.add_cog(DebugCommands(self))
-        
-        # Sync for the specific guild
-        guild_id = os.getenv("DISCORD_GUILD_ID")
-        if guild_id:
-            print(f"Syncing commands to guild ID: {guild_id}")
-            guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print("Guild command sync complete!")
-        
-        # Global sync as backup
-        print("Starting global command sync...")
-        await self.tree.sync()
-        print("Global command sync complete!")
     
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
@@ -722,22 +733,6 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"Error checking reactions: {str(e)}")
             traceback.print_exc()
-
-    def setup_bot(self):
-        """Setup the bot and its commands."""
-        self.bot.add_cog(WhitelistCommands(self.bot))
-        self.bot.add_cog(DebugCommands(self.bot))
-        
-        # Add command error handler
-        @self.bot.event
-        async def on_command_error(ctx, error):
-            if isinstance(error, commands.CommandNotFound):
-                return
-            elif isinstance(error, commands.CheckFailure):
-                await ctx.send(ERROR_PERMISSION_DENIED, delete_after=5)
-            else:
-                await ctx.send(f"{ERROR_PROCESSING} {str(error)}", delete_after=10)
-                logger.error(f"Command error: {error}")
 
 def main() -> None:
     """Start the bot."""
