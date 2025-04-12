@@ -330,13 +330,13 @@ class QuingCraftBot(commands.Bot):
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
         
-        print("Setting up command cogs...")
+        print("Setting up bot...")
         
         # Create the task for cleaning up duplicate commands
+        # This will completely reset commands and add them back correctly
         self.loop.create_task(self.whitelist_command_cleanup())
         
-        # Add cogs
-        await self.add_cog(AdminCommands(self))
+        # Add debug commands cog - this won't conflict with Slash commands
         await self.add_cog(DebugCommands(self))
         
         # Add command error handler
@@ -365,94 +365,36 @@ class QuingCraftBot(commands.Bot):
         print("Global command sync complete!")
     
     async def whitelist_command_cleanup(self) -> None:
-        """Remove duplicate whitelist commands to prevent confusion."""
+        """Clean up duplicate slash commands and re-add them."""
+        # Wait for the bot to be ready
         await self.wait_until_ready()
         
-        print("Cleaning up duplicate whitelist commands using direct Discord API access...")
+        print("Cleaning up whitelist commands...")
         
         try:
-            # 1. Get all global application commands
-            print("Fetching all global commands...")
-            app_id = self.application_id
-            http = self.http
+            # Get all existing commands
+            commands = await self.tree.fetch_commands()
             
-            # Get all global commands directly from Discord
-            global_commands = await http.request(
-                discord.http.Route('GET', '/applications/{app_id}/commands', app_id=app_id)
-            )
+            # Delete all slash commands that are related to whitelist
+            for command in commands:
+                if command.name == "qc":
+                    print(f"Removing command: {command.name}")
+                    await self.tree.delete_command(command.id)
             
-            print(f"Found {len(global_commands)} global commands")
-            for cmd in global_commands:
-                print(f"Global command: {cmd.get('name')} (ID: {cmd.get('id')})")
-                
-                # Delete the standalone whitelist command if it exists
-                if cmd.get('name') == 'whitelist':
-                    print(f"Deleting global whitelist command ID: {cmd.get('id')}")
-                    await http.request(
-                        discord.http.Route(
-                            'DELETE', 
-                            '/applications/{app_id}/commands/{cmd_id}', 
-                            app_id=app_id, 
-                            cmd_id=cmd.get('id')
-                        )
-                    )
-                    print("Global whitelist command deleted")
+            # Wait a moment to ensure commands are deleted
+            await asyncio.sleep(2)
             
-            # 2. Get guild commands for each guild the bot is in
-            for guild in self.guilds:
-                print(f"Checking guild: {guild.name} (ID: {guild.id})")
-                guild_id = guild.id
-                
-                # Get guild commands
-                guild_commands = await http.request(
-                    discord.http.Route(
-                        'GET', 
-                        '/applications/{app_id}/guilds/{guild_id}/commands', 
-                        app_id=app_id, 
-                        guild_id=guild_id
-                    )
-                )
-                
-                print(f"Found {len(guild_commands)} commands in guild {guild.name}")
-                for cmd in guild_commands:
-                    print(f"Guild command: {cmd.get('name')} (ID: {cmd.get('id')})")
-                    
-                    # Delete the standalone whitelist command if it exists
-                    if cmd.get('name') == 'whitelist':
-                        print(f"Deleting guild whitelist command ID: {cmd.get('id')}")
-                        await http.request(
-                            discord.http.Route(
-                                'DELETE', 
-                                '/applications/{app_id}/guilds/{guild_id}/commands/{cmd_id}', 
-                                app_id=app_id, 
-                                guild_id=guild_id, 
-                                cmd_id=cmd.get('id')
-                            )
-                        )
-                        print(f"Guild whitelist command deleted from {guild.name}")
+            # Add the AdminCommands cog with slash commands
+            print("Adding AdminCommands cog...")
+            await self.add_cog(AdminCommands(self))
             
-            # 3. Remove the command from local tree and sync again
-            try:
-                print("Removing whitelist command from local command tree...")
-                self.tree.remove_command("whitelist")
-            except Exception as e:
-                print(f"Error removing from local tree: {e}")
-            
-            # 4. Final sync to ensure all changes take effect
-            print("Syncing command tree to apply all changes...")
+            # Sync the commands
             await self.tree.sync()
+            print("Command sync complete.")
             
-            print("Command cleanup complete!")
         except Exception as e:
             print(f"Error during command cleanup: {e}")
             traceback.print_exc()
-            
-            # Try to sync anyway
-            try:
-                await self.tree.sync()
-            except Exception as sync_error:
-                print(f"Error syncing commands: {sync_error}")
-                traceback.print_exc()
     
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
