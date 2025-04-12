@@ -24,7 +24,9 @@ from .texts import (
     WHITELIST_REJECTED,
     MOD_REQUEST_TITLE,
     MOD_REQUEST_DESCRIPTION,
-    ERROR_DATABASE
+    ERROR_DATABASE,
+    WHITELIST_DUPLICATE,
+    MOD_ERROR_WHITELIST
 )
 
 load_dotenv()
@@ -64,89 +66,88 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
             # Verify Minecraft username
             if not await self.bot.verify_minecraft_username(minecraft_username):
                 await interaction.response.send_message(
-                    "Der Minecraft-Benutzername ist ungültig. Bitte überprüfe die Schreibweise.",
+                    WHITELIST_INVALID_NAME,
                     ephemeral=True
                 )
                 return
             
-            # Überprüfe, ob der Discord-Benutzer bereits eine ausstehende Anfrage hat
+            # Check if the Discord user already has a pending request
             pending_request = self.bot.db.get_pending_request(user.id)
             
             if pending_request:
                 print(f"User {user.name} already has a pending request: {pending_request}")
                 await interaction.response.send_message(
-                    "Du hast bereits eine ausstehende Whitelist-Anfrage. Bitte warte, bis sie bearbeitet wurde.",
+                    WHITELIST_PENDING,
                     ephemeral=True
                 )
                 return
             
-            # Überprüfe, ob der Minecraft-Benutzername bereits in Verwendung ist
+            # Check if the Minecraft username is already in use
             existing_username_request = self.bot.db.get_request_by_minecraft_username(minecraft_username)
             if existing_username_request and existing_username_request[3] == "pending":
                 await interaction.response.send_message(
-                    f"Es gibt bereits eine ausstehende Anfrage für den Benutzernamen '{minecraft_username}'. "
-                    f"Bitte wähle einen anderen Benutzernamen oder warte, bis die bestehende Anfrage bearbeitet wurde.",
+                    WHITELIST_DUPLICATE,
                     ephemeral=True
                 )
                 return
             
-            # Bestätige dem Benutzer, dass die Anfrage eingegangen ist
+            # Confirm to the user that the request has been received
             await interaction.response.send_message(
-                "Deine Whitelist-Anfrage wurde eingereicht! Du wirst benachrichtigt, sobald sie bearbeitet wurde.",
+                WHITELIST_SUCCESS,
                 ephemeral=True
             )
             
-            # Füge die Anfrage in die Datenbank ein
+            # Add the request to the database
             added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason)
             if not added_request:
                 print(f"Failed to add whitelist request to database for {user.name}")
-                await user.send("Es gab ein Problem bei der Verarbeitung deiner Anfrage. Bitte versuche es später erneut.")
+                await user.send(ERROR_DATABASE)
                 return
             
-            # Sende die Anfrage an den Moderator-Kanal
+            # Send the request to the moderator channel
             mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
             mod_channel = interaction.client.get_channel(mod_channel_id)
             
             if not mod_channel:
                 print(f"Could not find mod channel with ID {mod_channel_id}")
-                await user.send("Es gab ein Problem bei der Weiterleitung deiner Anfrage. Bitte kontaktiere einen Administrator.")
+                await user.send(ERROR_GENERIC)
                 return
             
-            account_created = user.created_at.strftime("%d.%m.%Y")
-            joined_server = user.joined_at.strftime("%d.%m.%Y") if user.joined_at else "Unbekannt"
+            account_created = user.created_at.strftime("%m/%d/%Y")
+            joined_server = user.joined_at.strftime("%m/%d/%Y") if user.joined_at else "Unknown"
             
-            # Erstelle das Embed für die Moderatoren
+            # Create the embed for moderators
             embed = discord.Embed(
                 title=MOD_REQUEST_TITLE,
-                description=f"Whitelist-Anfrage für **{minecraft_username}**\n"
+                description=f"Whitelist request for **{minecraft_username}**\n"
                             f"Discord: <@{user.id}> ({user.name})\n"
-                            f"Account erstellt: {account_created}\n"
-                            f"Server beigetreten: {joined_server}",
+                            f"Account created: {account_created}\n"
+                            f"Joined server: {joined_server}",
                 color=0x3498db
             )
 
-            # Füge die Anmerkungen hinzu, wenn vorhanden
+            # Add notes if available
             if reason:
-                embed.add_field(name="Anmerkungen", value=reason, inline=False)
+                embed.add_field(name="Notes", value=reason, inline=False)
             
-            # Sende das Embed an den Moderator-Kanal
+            # Send the embed to the moderator channel
             message = await mod_channel.send(embed=embed)
             
-            # Füge die Reaktionen hinzu
+            # Add reactions
             await message.add_reaction("✅")
             await message.add_reaction("❌")
             
-            # Speichere die Nachricht-ID für später
+            # Save the message ID for later
             self.bot.pending_requests[user.id] = message.id
             print(f"Added pending request for {user.id}: {message.id}")
         except Exception as e:
             print(f"Error processing whitelist request: {str(e)}")
             traceback.print_exc()
-            # Versuche, eine Fehlermeldung an den Benutzer zu senden
+            # Try to send an error message to the user
             try:
                 if not interaction.response.is_done():
                     await interaction.response.send_message(
-                        "Es ist ein Fehler aufgetreten. Bitte versuche es später erneut oder kontaktiere einen Administrator.",
+                        ERROR_PROCESSING,
                         ephemeral=True
                     )
             except:
@@ -170,10 +171,10 @@ class QuingCraftBot(commands.Bot):
     
     def __init__(self) -> None:
         """Initialize the bot with necessary components."""
-        intents = discord.Intents.all()  # Verwende alle Intents
+        intents = discord.Intents.all()  # Use all intents
         # intents = discord.Intents.default()
         # intents.message_content = True
-        # Stelle sicher, dass wir Reaktions-Intents haben
+        # Make sure we have reaction intents
         # intents.reactions = True
         # intents.guild_messages = True
         # intents.guild_reactions = True
@@ -190,7 +191,7 @@ class QuingCraftBot(commands.Bot):
             int(os.getenv("MOD_ROLE_ID", "0"))
         ]
         
-        # Debug-Nachricht zur Initialisierung
+        # Debug message for initialization
         print("DEBUG: Bot initialized with all intents")
     
     async def setup_hook(self) -> None:
@@ -198,46 +199,46 @@ class QuingCraftBot(commands.Bot):
         
         print("Registering slash commands...")
         
-        # Erstelle eine Command Group für /qc
-        qc_group = app_commands.Group(name="qc", description="QuingCraft Verwaltungsbefehle (nur für Staff)")
+        # Create a Command Group for /qc
+        qc_group = app_commands.Group(name="qc", description="QuingCraft management commands (staff only)")
         
-        # Erstelle eine Subgroup für /qc whitelist
-        whitelist_group = app_commands.Group(name="whitelist", description="Whitelist-Verwaltungsbefehle", parent=qc_group)
+        # Create a Subgroup for /qc whitelist
+        whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=qc_group)
         
-        @whitelist_group.command(name="add", description="Fügt einen Spieler zur Whitelist hinzu")
-        @app_commands.describe(username="Minecraft Benutzername")
+        @whitelist_group.command(name="add", description="Add a player to the whitelist")
+        @app_commands.describe(username="Minecraft Username")
         async def whitelist_add(interaction: discord.Interaction, username: str):
             # Check if user has staff role
             if not any(role.id in self.staff_roles for role in interaction.user.roles):
-                await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl zu verwenden.", ephemeral=True)
+                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
                 return
             
-            # Direkt vpw-Befehl verwenden
+            # Use vpw command
             response = await self.rcon.execute_command(f"vpw add {username}")
-            await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+            await interaction.response.send_message(f"Whitelist command executed:\n```{response}```", ephemeral=True)
         
-        @whitelist_group.command(name="remove", description="Entfernt einen Spieler von der Whitelist")
-        @app_commands.describe(username="Minecraft Benutzername")
+        @whitelist_group.command(name="remove", description="Remove a player from the whitelist")
+        @app_commands.describe(username="Minecraft Username")
         async def whitelist_remove(interaction: discord.Interaction, username: str):
             # Check if user has staff role
             if not any(role.id in self.staff_roles for role in interaction.user.roles):
-                await interaction.response.send_message("Du hast keine Berechtigung, diesen Befehl zu verwenden.", ephemeral=True)
+                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
                 return
             
-            # Direkt vpw-Befehl verwenden
+            # Use vpw command
             response = await self.rcon.execute_command(f"vpw remove {username}")
-            await interaction.response.send_message(f"Whitelist Befehl ausgeführt:\n```{response}```", ephemeral=True)
+            await interaction.response.send_message(f"Whitelist command executed:\n```{response}```", ephemeral=True)
         
-        # Füge die Command-Gruppen zum Command Tree hinzu
+        # Add the command groups to the command tree
         self.tree.add_command(qc_group)
         
-        # Entferne den alten qc-Command, falls er existiert
+        # Remove the old qc command if it exists
         for cmd in self.tree.get_commands():
             if cmd.name == "qc" and not isinstance(cmd, app_commands.Group):
                 self.tree.remove_command(cmd)
                 print("Removed old qc command")
         
-        # Explizit für die spezifische Guild synchronisieren
+        # Sync for the specific guild
         guild_id = os.getenv("DISCORD_GUILD_ID")
         if guild_id:
             print(f"Syncing commands to guild ID: {guild_id}")
@@ -246,7 +247,7 @@ class QuingCraftBot(commands.Bot):
             await self.tree.sync(guild=guild)
             print("Guild command sync complete!")
         
-        # Global sync als Backup
+        # Global sync as backup
         print("Starting global command sync...")
         await self.tree.sync()
         print("Global command sync complete!")
@@ -536,7 +537,7 @@ class QuingCraftBot(commands.Bot):
                 try:
                     channel = self.get_channel(channel_id)
                     if channel:
-                        await channel.send(f"⚠️ Fehler beim Hinzufügen von {minecraft_username} zur Whitelist. Bitte versuchen Sie es manuell oder kontaktieren Sie den Administrator.", delete_after=60)
+                        await channel.send(MOD_ERROR_WHITELIST.format(username=minecraft_username), delete_after=60)
                 except Exception as e:
                     print(f"DEBUG: Error sending error message: {str(e)}")
         except Exception as e:

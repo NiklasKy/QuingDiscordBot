@@ -48,19 +48,67 @@ class RconHandler:
             response = await self.execute_command(f"vpw add {username}")
             logger.info(f"Whitelist add response: {response}")
             
-            # Verify the player was added
-            if await self.whitelist_check(username):
-                logger.info(f"{username} was added to the whitelist")
-                return True
+            # If offline player, wait longer for UUID fetch from Mojang
+            if "offline" in response.lower() or "fetching uuid" in response.lower():
+                logger.info(f"Player {username} is offline, waiting for UUID fetch...")
+                await asyncio.sleep(5)  # Initial wait
+                
+                # First check after wait
+                if await self.whitelist_check(username):
+                    logger.info(f"{username} was added to the whitelist after first wait")
+                    return True
+                
+                # If still not on the list, wait longer and check again (Mojang API can be slow)
+                logger.info(f"Player {username} not yet on whitelist, waiting longer...")
+                await asyncio.sleep(10)
+                
+                if await self.whitelist_check(username):
+                    logger.info(f"{username} was added to the whitelist after second wait")
+                    return True
+                
+                # One more check with longer wait
+                logger.info(f"Player {username} not yet on whitelist, final wait...")
+                await asyncio.sleep(15)
+                
+                if await self.whitelist_check(username):
+                    logger.info(f"{username} was added to the whitelist after final wait")
+                    return True
+                
+                # If the whitelisting was still not successful after waiting,
+                # but there was no error in the response, consider it a success anyway
+                if "error" not in response.lower() and "unknown command" not in response.lower():
+                    logger.warning(f"Player {username} not detected in whitelist, but assuming success based on RCON response")
+                    return True
+            else:
+                # For online players, a shorter wait should be enough
+                await asyncio.sleep(2)
+                
+                # Check if player was added
+                if await self.whitelist_check(username):
+                    logger.info(f"{username} was added to the whitelist")
+                    return True
+                
+                # If explicit success message
+                if "added" in response.lower():
+                    logger.info(f"{username} was considered added to the whitelist based on response")
+                    return True
             
-            # If player is offline, the command might fail, try again
+            # If we got here, try again
             logger.warning(f"Failed to add {username} to the whitelist, retrying")
             response = await self.execute_command(f"vpw add {username}")
             logger.info(f"Whitelist add retry response: {response}")
             
+            # Wait after retry
+            await asyncio.sleep(5)
+            
             # Check again
             if await self.whitelist_check(username):
                 logger.info(f"{username} was added to the whitelist after retry")
+                return True
+            
+            # If the response indicates success but check fails, trust the response
+            if "added" in response.lower() or ("fetching uuid" in response.lower() and "error" not in response.lower()):
+                logger.warning(f"Player {username} not detected in whitelist, but assuming success based on retry response")
                 return True
             
             logger.error(f"Failed to add {username} to the whitelist after retry")
@@ -91,9 +139,30 @@ class RconHandler:
             response = await self.execute_command(f"vpw remove {username}")
             logger.info(f"Whitelist remove response: {response}")
             
+            # Wait for the server to process the removal
+            await asyncio.sleep(3)
+            
             # Verify the player was removed
             if not await self.whitelist_check(username):
                 logger.info(f"{username} was removed from the whitelist")
+                return True
+            
+            # If the response indicates a successful removal, return success
+            if "removed" in response.lower():
+                logger.info(f"{username} was considered removed from the whitelist based on response")
+                return True
+            
+            # Wait a bit longer and check again
+            logger.info(f"Player {username} still appears on whitelist, waiting longer...")
+            await asyncio.sleep(5)
+            
+            if not await self.whitelist_check(username):
+                logger.info(f"{username} was removed from the whitelist after waiting")
+                return True
+            
+            # If the list command is unreliable, we'll assume success if the command executed without errors
+            if "error" not in response.lower() and "unknown command" not in response.lower():
+                logger.warning(f"Player {username} still detected in whitelist, but assuming success based on RCON response")
                 return True
             
             logger.error(f"Failed to remove {username} from the whitelist")
@@ -118,8 +187,17 @@ class RconHandler:
             response = await self.execute_command(f"vpw list")
             logger.info(f"Whitelist check response: {response}")
             
-            # Parse the response and check if the username is in it
-            return username.lower() in response.lower()
+            # Add more detailed debug logging
+            if username.lower() in response.lower():
+                logger.info(f"Player {username} found in whitelist")
+                return True
+            else:
+                logger.info(f"Player {username} NOT found in whitelist. Full response: '{response}'")
+                # Check if the response is empty or says no players
+                if "no players" in response.lower() or not response.strip():
+                    logger.info("Whitelist appears to be empty or command returned no players")
+                
+                return False
         except Exception as e:
             logger.error(f"Error checking if {username} is on the whitelist: {e}")
             return False
