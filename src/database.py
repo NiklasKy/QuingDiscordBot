@@ -289,6 +289,22 @@ class Database:
             self.conn.rollback()
             return []
     
+    def get_request_by_minecraft_username(self, minecraft_username: str) -> Optional[tuple]:
+        """Get a request by Minecraft username."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM whitelist_requests
+                    WHERE minecraft_username = %s
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                """, (minecraft_username,))
+                return cur.fetchone()
+        except Exception as e:
+            print(f"Database error in get_request_by_minecraft_username: {e}")
+            self.conn.rollback()
+            return None
+    
     def close(self) -> None:
         """Close the database connection."""
         self.conn.close() 

@@ -41,8 +41,8 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
     )
     
     reason = discord.ui.TextInput(
-        label="Reason for joining",
-        placeholder="Tell us why you want to join our server...",
+        label="Request Notes",
+        placeholder="",
         required=False,
         max_length=500,
         style=discord.TextStyle.paragraph
@@ -54,82 +54,103 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
     
     async def on_submit(self, interaction: discord.Interaction) -> None:
         """Process the submitted modal."""
-        minecraft_username = self.username.value
-        reason = self.reason.value  # Die Begründung erfassen
-        
-        user = interaction.user
-        print(f"Whitelist request from {user.name} ({user.id}) for username: {minecraft_username}")
-        
-        # Überprüfe, ob der Discord-Benutzer bereits eine ausstehende Anfrage hat
-        pending_request = self.bot.db.get_pending_request(user.id)
-        
-        if pending_request:
-            print(f"User {user.name} already has a pending request: {pending_request}")
+        try:
+            minecraft_username = self.username.value.strip()
+            reason = self.reason.value.strip() if self.reason.value else None
+            
+            user = interaction.user
+            print(f"Whitelist request from {user.name} ({user.id}) for username: {minecraft_username}")
+            
+            # Verify Minecraft username
+            if not await self.bot.verify_minecraft_username(minecraft_username):
+                await interaction.response.send_message(
+                    "Der Minecraft-Benutzername ist ungültig. Bitte überprüfe die Schreibweise.",
+                    ephemeral=True
+                )
+                return
+            
+            # Überprüfe, ob der Discord-Benutzer bereits eine ausstehende Anfrage hat
+            pending_request = self.bot.db.get_pending_request(user.id)
+            
+            if pending_request:
+                print(f"User {user.name} already has a pending request: {pending_request}")
+                await interaction.response.send_message(
+                    "Du hast bereits eine ausstehende Whitelist-Anfrage. Bitte warte, bis sie bearbeitet wurde.",
+                    ephemeral=True
+                )
+                return
+            
+            # Überprüfe, ob der Minecraft-Benutzername bereits in Verwendung ist
+            existing_username_request = self.bot.db.get_request_by_minecraft_username(minecraft_username)
+            if existing_username_request and existing_username_request[3] == "pending":
+                await interaction.response.send_message(
+                    f"Es gibt bereits eine ausstehende Anfrage für den Benutzernamen '{minecraft_username}'. "
+                    f"Bitte wähle einen anderen Benutzernamen oder warte, bis die bestehende Anfrage bearbeitet wurde.",
+                    ephemeral=True
+                )
+                return
+            
+            # Bestätige dem Benutzer, dass die Anfrage eingegangen ist
             await interaction.response.send_message(
-                "Du hast bereits eine ausstehende Whitelist-Anfrage. Bitte warte, bis sie bearbeitet wurde.",
+                "Deine Whitelist-Anfrage wurde eingereicht! Du wirst benachrichtigt, sobald sie bearbeitet wurde.",
                 ephemeral=True
             )
-            return
-        
-        # Überprüfe, ob der Minecraft-Benutzername bereits in Verwendung ist
-        existing_username_request = self.bot.db.get_request_by_minecraft_username(minecraft_username)
-        if existing_username_request and existing_username_request[3] == "pending":
-            await interaction.response.send_message(
-                f"Es gibt bereits eine ausstehende Anfrage für den Benutzernamen '{minecraft_username}'. "
-                f"Bitte wähle einen anderen Benutzernamen oder warte, bis die bestehende Anfrage bearbeitet wurde.",
-                ephemeral=True
+            
+            # Füge die Anfrage in die Datenbank ein
+            added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason)
+            if not added_request:
+                print(f"Failed to add whitelist request to database for {user.name}")
+                await user.send("Es gab ein Problem bei der Verarbeitung deiner Anfrage. Bitte versuche es später erneut.")
+                return
+            
+            # Sende die Anfrage an den Moderator-Kanal
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            mod_channel = interaction.client.get_channel(mod_channel_id)
+            
+            if not mod_channel:
+                print(f"Could not find mod channel with ID {mod_channel_id}")
+                await user.send("Es gab ein Problem bei der Weiterleitung deiner Anfrage. Bitte kontaktiere einen Administrator.")
+                return
+            
+            account_created = user.created_at.strftime("%d.%m.%Y")
+            joined_server = user.joined_at.strftime("%d.%m.%Y") if user.joined_at else "Unbekannt"
+            
+            # Erstelle das Embed für die Moderatoren
+            embed = discord.Embed(
+                title=MOD_REQUEST_TITLE,
+                description=f"Whitelist-Anfrage für **{minecraft_username}**\n"
+                            f"Discord: <@{user.id}> ({user.name})\n"
+                            f"Account erstellt: {account_created}\n"
+                            f"Server beigetreten: {joined_server}",
+                color=0x3498db
             )
-            return
-        
-        # Bestätige dem Benutzer, dass die Anfrage eingegangen ist
-        await interaction.response.send_message(
-            "Deine Whitelist-Anfrage wurde eingereicht! Du wirst benachrichtigt, sobald sie bearbeitet wurde.",
-            ephemeral=True
-        )
-        
-        # Füge die Anfrage in die Datenbank ein
-        added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason)
-        if not added_request:
-            print(f"Failed to add whitelist request to database for {user.name}")
-            await user.send("Es gab ein Problem bei der Verarbeitung deiner Anfrage. Bitte versuche es später erneut.")
-            return
-        
-        # Sende die Anfrage an den Moderator-Kanal
-        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
-        mod_channel = interaction.client.get_channel(mod_channel_id)
-        
-        if not mod_channel:
-            print(f"Could not find mod channel with ID {mod_channel_id}")
-            await user.send("Es gab ein Problem bei der Weiterleitung deiner Anfrage. Bitte kontaktiere einen Administrator.")
-            return
-        
-        account_created = user.created_at.strftime("%d.%m.%Y")
-        joined_server = user.joined_at.strftime("%d.%m.%Y") if user.joined_at else "Unbekannt"
-        
-        # Erstelle das Embed für die Moderatoren
-        embed = discord.Embed(
-            title=MOD_REQUEST_TITLE,
-            description=f"Whitelist-Anfrage für **{minecraft_username}**\n"
-                        f"Discord: <@{user.id}> ({user.name})\n"
-                        f"Account erstellt: {account_created}\n"
-                        f"Server beigetreten: {joined_server}",
-            color=0x3498db
-        )
 
-        # Füge die Begründung hinzu, wenn vorhanden
-        if reason:
-            embed.add_field(name="Begründung", value=reason, inline=False)
-        
-        # Sende das Embed an den Moderator-Kanal
-        message = await mod_channel.send(embed=embed)
-        
-        # Füge die Reaktionen hinzu
-        await message.add_reaction("✅")
-        await message.add_reaction("❌")
-        
-        # Speichere die Nachricht-ID für später
-        self.bot.pending_requests[user.id] = message.id
-        print(f"Added pending request for {user.id}: {message.id}")
+            # Füge die Anmerkungen hinzu, wenn vorhanden
+            if reason:
+                embed.add_field(name="Anmerkungen", value=reason, inline=False)
+            
+            # Sende das Embed an den Moderator-Kanal
+            message = await mod_channel.send(embed=embed)
+            
+            # Füge die Reaktionen hinzu
+            await message.add_reaction("✅")
+            await message.add_reaction("❌")
+            
+            # Speichere die Nachricht-ID für später
+            self.bot.pending_requests[user.id] = message.id
+            print(f"Added pending request for {user.id}: {message.id}")
+        except Exception as e:
+            print(f"Error processing whitelist request: {str(e)}")
+            traceback.print_exc()
+            # Versuche, eine Fehlermeldung an den Benutzer zu senden
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "Es ist ein Fehler aufgetreten. Bitte versuche es später erneut oder kontaktiere einen Administrator.",
+                        ephemeral=True
+                    )
+            except:
+                pass
 
 class WhitelistView(discord.ui.View):
     """View containing the whitelist button."""
