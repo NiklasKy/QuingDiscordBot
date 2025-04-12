@@ -209,6 +209,13 @@ class AdminCommands(commands.Cog):
             extras={"requires_staff": True}
         ))
         
+        self.whitelist_group.add_command(app_commands.Command(
+            name="show",
+            description="Show all players on the whitelist",
+            callback=self.whitelist_show,
+            extras={"requires_staff": True}
+        ))
+        
         # Add the groups to the bot
         bot.tree.add_command(self.qc_group)
     
@@ -249,6 +256,26 @@ class AdminCommands(commands.Cog):
             await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username), ephemeral=False)
         else:
             await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.", ephemeral=False)
+    
+    async def whitelist_show(self, interaction: discord.Interaction):
+        """Show all players on the whitelist."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command received before long-running operations
+        await interaction.response.defer(ephemeral=False)
+        
+        # Get the whitelist directly via RCON
+        response = await self.bot.rcon.execute_command("vpw list")
+        
+        # Format and send the response
+        if response and "Error:" not in response:
+            formatted_response = f"**Current Whitelist:**\n```\n{response}\n```"
+            await interaction.followup.send(formatted_response)
+        else:
+            await interaction.followup.send(f"Failed to retrieve whitelist: {response}")
 
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
