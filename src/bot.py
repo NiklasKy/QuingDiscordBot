@@ -227,16 +227,16 @@ class AdminCommands(commands.Cog):
             return
         
         # Acknowledge the command received before long-running operations
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         # Use the more robust whitelist_add method from the RCON handler
         result = await self.bot.rcon.whitelist_add(username)
         
-        # Send the result back to the user
+        # Send the result back to the user - public for everyone to see
         if result:
-            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username), ephemeral=False)
+            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username))
         else:
-            await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.", ephemeral=False)
+            await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.")
     
     async def whitelist_remove(self, interaction: discord.Interaction, username: str):
         """Remove a player from the whitelist."""
@@ -246,16 +246,16 @@ class AdminCommands(commands.Cog):
             return
         
         # Acknowledge the command received before long-running operations
-        await interaction.response.defer(ephemeral=True)
+        await interaction.response.defer(ephemeral=False)
         
         # Use the more robust whitelist_remove method from the RCON handler
         result = await self.bot.rcon.whitelist_remove(username)
         
-        # Send the result back to the user
+        # Send the result back to the user - public for everyone to see
         if result:
-            await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username), ephemeral=False)
+            await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username))
         else:
-            await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.", ephemeral=False)
+            await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.")
     
     async def whitelist_show(self, interaction: discord.Interaction):
         """Show all players on the whitelist."""
@@ -268,14 +268,18 @@ class AdminCommands(commands.Cog):
         await interaction.response.defer(ephemeral=False)
         
         # Get the whitelist directly via RCON
-        response = await self.bot.rcon.execute_command("vpw list")
-        
-        # Format and send the response
-        if response and "Error:" not in response:
-            formatted_response = f"**Current Whitelist:**\n```\n{response}\n```"
-            await interaction.followup.send(formatted_response)
-        else:
-            await interaction.followup.send(f"Failed to retrieve whitelist: {response}")
+        try:
+            response = await self.bot.rcon.execute_command("vpw list")
+            
+            # Format and send the response
+            if response and "Error:" not in response:
+                formatted_response = f"**Current Whitelist:**\n```\n{response}\n```"
+                await interaction.followup.send(formatted_response)
+            else:
+                await interaction.followup.send(f"Failed to retrieve whitelist: {response}")
+        except Exception as e:
+            print(f"Error in whitelist_show: {str(e)}")
+            await interaction.followup.send(f"An error occurred while retrieving the whitelist: {str(e)}")
 
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
@@ -405,7 +409,7 @@ class QuingCraftBot(commands.Bot):
             # Delete all slash commands that are related to whitelist
             for command in commands:
                 if command.name == "qc":
-                    print(f"Removing command: {command.name}")
+                    print(f"Removing command: {command.name} (ID: {command.id})")
                     await self.tree.delete_command(command.id)
             
             # Wait a moment to ensure commands are deleted
@@ -413,11 +417,29 @@ class QuingCraftBot(commands.Bot):
             
             # Add the AdminCommands cog with slash commands
             print("Adding AdminCommands cog...")
-            await self.add_cog(AdminCommands(self))
+            admin_cog = AdminCommands(self)
+            await self.add_cog(admin_cog)
             
-            # Sync the commands
+            # Explicitly sync commands for the specific guild
+            guild_id = os.getenv("DISCORD_GUILD_ID")
+            if guild_id:
+                print(f"Force syncing commands to guild ID: {guild_id}")
+                guild = discord.Object(id=int(guild_id))
+                self.tree.copy_global_to(guild=guild)
+                await self.tree.sync(guild=guild)
+            
+            # Also sync globally
+            print("Force syncing commands globally...")
             await self.tree.sync()
             print("Command sync complete.")
+            
+            print("Verifying commands...")
+            updated_commands = await self.tree.fetch_commands()
+            for cmd in updated_commands:
+                print(f"Registered command: {cmd.name} (ID: {cmd.id})")
+                if hasattr(cmd, 'children'):
+                    for child in cmd.children:
+                        print(f" - Child command: {child.name}")
             
         except Exception as e:
             print(f"Error during command cleanup: {e}")
