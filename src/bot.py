@@ -227,9 +227,9 @@ class AdminCommands(commands.Cog):
         
         # Send the result back to the user
         if result:
-            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username), ephemeral=True)
+            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username), ephemeral=False)
         else:
-            await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.", ephemeral=True)
+            await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.", ephemeral=False)
     
     async def whitelist_remove(self, interaction: discord.Interaction, username: str):
         """Remove a player from the whitelist."""
@@ -246,9 +246,9 @@ class AdminCommands(commands.Cog):
         
         # Send the result back to the user
         if result:
-            await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username), ephemeral=True)
+            await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username), ephemeral=False)
         else:
-            await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.", ephemeral=True)
+            await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.", ephemeral=False)
 
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
