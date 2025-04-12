@@ -26,7 +26,24 @@ from .texts import (
     MOD_REQUEST_DESCRIPTION,
     ERROR_DATABASE,
     WHITELIST_DUPLICATE,
-    MOD_ERROR_WHITELIST
+    MOD_ERROR_WHITELIST,
+    ERROR_PROCESSING,
+    ERROR_PERMISSION_DENIED,
+    ERROR_GENERIC,
+    WHITELIST_COMMAND_SUCCESS,
+    WHITELIST_ADD_SUCCESS,
+    WHITELIST_REMOVE_SUCCESS,
+    WHITELIST_CHECK_RESULT,
+    WHITELIST_CHECK_ON,
+    WHITELIST_CHECK_OFF,
+    DEBUG_PROVIDE_USERNAME,
+    DEBUG_ATTEMPT_ADD,
+    DEBUG_RESULT,
+    DEBUG_PROVIDE_MESSAGE_ID,
+    DEBUG_CHECKING_REACTIONS,
+    DEBUG_CHECKING_WHITELIST,
+    DEBUG_NO_PENDING_REQUESTS,
+    DEBUG_INVALID_MESSAGE_ID
 )
 
 load_dotenv()
@@ -119,10 +136,12 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
             # Create the embed for moderators
             embed = discord.Embed(
                 title=MOD_REQUEST_TITLE,
-                description=f"Whitelist request for **{minecraft_username}**\n"
-                            f"Discord: <@{user.id}> ({user.name})\n"
-                            f"Account created: {account_created}\n"
-                            f"Joined server: {joined_server}",
+                description=MOD_REQUEST_DESCRIPTION.format(
+                    minecraft_username=minecraft_username,
+                    discord_user=f"<@{user.id}> ({user.name})",
+                    account_created=account_created,
+                    joined_server=joined_server
+                ),
                 color=0x3498db
             )
 
@@ -166,18 +185,116 @@ class WhitelistView(discord.ui.View):
         modal = WhitelistModal(self.bot)
         await interaction.response.send_modal(modal)
 
+class AdminCommands(commands.Cog):
+    """Admin commands for the QuingCraft server."""
+    
+    def __init__(self, bot):
+        self.bot = bot
+        # Create the command group structure
+        self.qc_group = app_commands.Group(name="qc", description="QuingCraft management commands (staff only)")
+        self.whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=self.qc_group)
+        
+        # Register the commands
+        self.whitelist_group.add_command(app_commands.Command(
+            name="add",
+            description="Add a player to the whitelist",
+            callback=self.whitelist_add,
+            extras={"requires_staff": True}
+        ))
+        
+        self.whitelist_group.add_command(app_commands.Command(
+            name="remove",
+            description="Remove a player from the whitelist",
+            callback=self.whitelist_remove,
+            extras={"requires_staff": True}
+        ))
+        
+        # Add the groups to the bot
+        bot.tree.add_command(self.qc_group)
+    
+    async def whitelist_add(self, interaction: discord.Interaction, username: str):
+        """Add a player to the whitelist."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Use vpw command
+        response = await self.bot.rcon.execute_command(f"vpw add {username}")
+        await interaction.response.send_message(WHITELIST_COMMAND_SUCCESS.format(response=response), ephemeral=True)
+    
+    async def whitelist_remove(self, interaction: discord.Interaction, username: str):
+        """Remove a player from the whitelist."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Use vpw command
+        response = await self.bot.rcon.execute_command(f"vpw remove {username}")
+        await interaction.response.send_message(WHITELIST_COMMAND_SUCCESS.format(response=response), ephemeral=True)
+
+class DebugCommands(commands.Cog):
+    """Debug commands for the QuingCraft bot."""
+    
+    def __init__(self, bot):
+        self.bot = bot
+    
+    async def cog_check(self, ctx):
+        """Check if the user has staff role."""
+        return any(role.id in self.bot.staff_roles for role in ctx.author.roles)
+    
+    @commands.command(name="debug_requests")
+    async def debug_requests_command(self, ctx):
+        """List all pending whitelist requests."""
+        requests_info = "Current pending requests:\n"
+        for user_id, msg_id in self.bot.pending_requests.items():
+            # Try to get more information about the request
+            request = self.bot.db.get_pending_request(user_id)
+            minecraft_name = request[2] if request else "Unknown"
+            requests_info += f"• User {user_id} ({minecraft_name}): Message {msg_id}\n"
+        
+        await ctx.send(requests_info if self.bot.pending_requests else DEBUG_NO_PENDING_REQUESTS)
+    
+    @commands.command(name="debug_reactions")
+    async def debug_reactions_command(self, ctx, message_id: int = None):
+        """Check reactions on a message."""
+        if not message_id:
+            await ctx.send(DEBUG_PROVIDE_MESSAGE_ID)
+            return
+        
+        await ctx.send(DEBUG_CHECKING_REACTIONS.format(message_id=message_id))
+        await self.bot.check_reactions(message_id)
+    
+    @commands.command(name="whitelist_force_add")
+    async def whitelist_force_add_command(self, ctx, username: str = None):
+        """Force add a user to the whitelist."""
+        if not username:
+            await ctx.send(DEBUG_PROVIDE_USERNAME)
+            return
+        
+        await ctx.send(DEBUG_ATTEMPT_ADD.format(username=username))
+        result = await self.bot.rcon.whitelist_add(username)
+        await ctx.send(DEBUG_RESULT.format(result='Success' if result else 'Failed'))
+    
+    @commands.command(name="whitelist_check")
+    async def whitelist_check_command(self, ctx, username: str = None):
+        """Check if a user is on the whitelist."""
+        if not username:
+            await ctx.send(DEBUG_PROVIDE_USERNAME)
+            return
+        
+        await ctx.send(DEBUG_CHECKING_WHITELIST.format(username=username))
+        result = await self.bot.rcon.whitelist_check(username)
+        status = WHITELIST_CHECK_ON if result else WHITELIST_CHECK_OFF
+        await ctx.send(WHITELIST_CHECK_RESULT.format(username=username, status=status))
+
 class QuingCraftBot(commands.Bot):
     """Main bot class for QuingCraft."""
     
     def __init__(self) -> None:
         """Initialize the bot with necessary components."""
         intents = discord.Intents.all()  # Use all intents
-        # intents = discord.Intents.default()
-        # intents.message_content = True
-        # Make sure we have reaction intents
-        # intents.reactions = True
-        # intents.guild_messages = True
-        # intents.guild_reactions = True
         
         super().__init__(command_prefix="!", intents=intents)
         self.db = Database()
@@ -193,50 +310,45 @@ class QuingCraftBot(commands.Bot):
         
         # Debug message for initialization
         print("DEBUG: Bot initialized with all intents")
+        
+        # Create the task for cleaning up duplicate commands
+        self.command_cleanup_task = self.loop.create_task(self.whitelist_command_cleanup())
+    
+    async def whitelist_command_cleanup(self) -> None:
+        """Remove duplicate whitelist commands to prevent confusion."""
+        await self.wait_until_ready()
+        
+        print("Cleaning up duplicate whitelist commands...")
+        
+        # Get all global commands
+        commands = await self.tree.fetch_commands()
+        
+        # Look for any standalone 'whitelist' commands that might conflict
+        for cmd in commands:
+            if cmd.name == "whitelist" and not isinstance(cmd, app_commands.Group):
+                print(f"Removing duplicate command: {cmd.name}")
+                self.tree.remove_command(cmd.name)
+        
+        # Also check for potential 'whitelist add/remove' duplicates in direct or nested structures
+        for cmd in self.tree.get_commands():
+            if isinstance(cmd, app_commands.Group) and cmd.name == "whitelist":
+                print(f"Found whitelist group: {cmd.name}")
+                for subcmd in cmd.commands:
+                    print(f"- Subcommand: {subcmd.name}")
+        
+        # Sync the command tree to apply changes
+        print("Syncing command tree to apply cleanup changes...")
+        await self.tree.sync()
+        print("Command cleanup complete!")
     
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
         
-        print("Registering slash commands...")
+        print("Setting up command cogs...")
         
-        # Create a Command Group for /qc
-        qc_group = app_commands.Group(name="qc", description="QuingCraft management commands (staff only)")
-        
-        # Create a Subgroup for /qc whitelist
-        whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=qc_group)
-        
-        @whitelist_group.command(name="add", description="Add a player to the whitelist")
-        @app_commands.describe(username="Minecraft Username")
-        async def whitelist_add(interaction: discord.Interaction, username: str):
-            # Check if user has staff role
-            if not any(role.id in self.staff_roles for role in interaction.user.roles):
-                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
-                return
-            
-            # Use vpw command
-            response = await self.rcon.execute_command(f"vpw add {username}")
-            await interaction.response.send_message(f"Whitelist command executed:\n```{response}```", ephemeral=True)
-        
-        @whitelist_group.command(name="remove", description="Remove a player from the whitelist")
-        @app_commands.describe(username="Minecraft Username")
-        async def whitelist_remove(interaction: discord.Interaction, username: str):
-            # Check if user has staff role
-            if not any(role.id in self.staff_roles for role in interaction.user.roles):
-                await interaction.response.send_message("You don't have permission to use this command.", ephemeral=True)
-                return
-            
-            # Use vpw command
-            response = await self.rcon.execute_command(f"vpw remove {username}")
-            await interaction.response.send_message(f"Whitelist command executed:\n```{response}```", ephemeral=True)
-        
-        # Add the command groups to the command tree
-        self.tree.add_command(qc_group)
-        
-        # Remove the old qc command if it exists
-        for cmd in self.tree.get_commands():
-            if cmd.name == "qc" and not isinstance(cmd, app_commands.Group):
-                self.tree.remove_command(cmd)
-                print("Removed old qc command")
+        # Add cogs
+        await self.add_cog(AdminCommands(self))
+        await self.add_cog(DebugCommands(self))
         
         # Sync for the specific guild
         guild_id = os.getenv("DISCORD_GUILD_ID")
@@ -286,7 +398,7 @@ class QuingCraftBot(commands.Bot):
         async with aiohttp.ClientSession() as session:
             async with session.get(f"https://api.mojang.com/users/profiles/minecraft/{username}") as response:
                 return response.status == 200
-    
+
     async def on_ready(self) -> None:
         """Handle bot ready event."""
         print(f"Logged in as {self.user.name} ({self.user.id})")
@@ -301,11 +413,11 @@ class QuingCraftBot(commands.Bot):
         
         await self.create_whitelist_message()
         
-        # Nachricht über Command-Verfügbarkeit
+        # Message about command availability
         print("Commands should now be available in Discord!")
         print(f"Application ID: {self.user.id}")
         
-        # Debug: Liste alle Event-Listener auf
+        # Debug: List all event listeners
         print("\nDEBUG: Registered event listeners:")
         for listener in self._listeners:
             print(f" - {listener}")
@@ -313,7 +425,7 @@ class QuingCraftBot(commands.Bot):
     async def load_pending_requests(self) -> None:
         """Load pending requests from the database."""
         try:
-            # Hole alle ausstehenden Anfragen aus der Datenbank und versuche, die Nachrichten zu finden
+            # Get all pending requests from the database and try to find the messages
             pending_requests = self.db.get_all_pending_requests()
             if not pending_requests:
                 print("No pending requests found in database")
@@ -327,27 +439,27 @@ class QuingCraftBot(commands.Bot):
             
             print(f"Found {len(pending_requests)} pending requests in database")
             
-            # Durchsuche die letzten 100 Nachrichten im Mod-Kanal
+            # Search the last 100 messages in the mod channel
             async for message in mod_channel.history(limit=100):
                 if not message.embeds:
                     continue
                 
-                # Prüfe, ob die Nachricht eine Whitelist-Anfrage ist
+                # Check if the message is a whitelist request
                 embed = message.embeds[0]
                 if embed.title != MOD_REQUEST_TITLE:
                     continue
                 
-                # Extrahiere die Benutzer-ID aus dem Embed
+                # Extract the user ID from the embed
                 import re
-                match = re.search(r"<@(\d+)>", embed.description)
+                match = re.search(r"Discord: <@(\d+)>", embed.description)
                 if not match:
                     continue
                 
                 user_id = int(match.group(1))
                 
-                # Prüfe, ob dieser Benutzer eine ausstehende Anfrage hat
+                # Check if this user has a pending request
                 for req in pending_requests:
-                    if req[1] == user_id:  # req[1] sollte die discord_id sein
+                    if req[1] == user_id:  # req[1] should be the discord_id
                         print(f"Found message {message.id} for pending request from user {user_id}")
                         self.pending_requests[user_id] = message.id
                         break
@@ -357,15 +469,19 @@ class QuingCraftBot(commands.Bot):
             print(f"Error loading pending requests: {e}")
             traceback.print_exc()
     
-    # Nur ein Event-Listener für on_message behalten
+    # Keep only one event listener for on_message
     @commands.Cog.listener()
     async def on_message(self, message):
         """Process messages and commands."""
         if message.author.bot:
             return
         
-        # Debug-Befehle
+        # Debug commands
         if message.content.startswith("!debug"):
+            # Check if user has staff role
+            if not any(role.id in self.staff_roles for role in message.author.roles):
+                return  # Silently ignore debug commands from non-staff users
+            
             if message.content == "!debug-requests":
                 await self._debug_requests(message)
             elif message.content.startswith("!debug-reactions"):
@@ -380,7 +496,7 @@ class QuingCraftBot(commands.Bot):
                 else:
                     await message.channel.send("Please provide a username")
             elif message.content.startswith("!debug-memory"):
-                # Zeige wichtige Variablen und ihren Inhalt
+                # Show important variables and their content
                 memory_info = "**Memory Debug:**\n"
                 memory_info += f"- pending_requests: {self.pending_requests}\n"
                 memory_info += f"- whitelist_message_id: {self.whitelist_message_id}\n"
@@ -398,7 +514,7 @@ class QuingCraftBot(commands.Bot):
         
         requests_info = "**Current pending requests:**\n"
         for user_id, msg_id in self.pending_requests.items():
-            # Versuche, weitere Informationen über die Anfrage zu bekommen
+            # Try to get more information about the request
             request = self.db.get_pending_request(user_id)
             minecraft_name = request[2] if request else "Unknown"
             requests_info += f"• User {user_id} ({minecraft_name}): Message {msg_id}\n"
@@ -419,27 +535,27 @@ class QuingCraftBot(commands.Bot):
         except ValueError:
             await message.channel.send("Invalid message ID. Please provide a valid number.")
     
-    # Eventlistener für Reaktionen verbessern
+    # Event listener for reactions
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
         """Handle reactions on whitelist requests using raw events."""
-        # Ignoriere Bot-eigene Reaktionen
+        # Ignore bot's own reactions
         if payload.user_id == self.user.id:
             print(f"[REACTION] Ignoring bot's own reaction")
             return
         
-        # Ignoriere Reaktionen außerhalb des Mod-Channels
+        # Ignore reactions outside the mod channel
         mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
         if payload.channel_id != mod_channel_id:
             return
         
         emoji = str(payload.emoji)
         message_id = payload.message_id
-        moderator_id = payload.user_id  # ID des Moderators, der reagiert hat
+        moderator_id = payload.user_id  # ID of the moderator who reacted
         
         print(f"[REACTION] Detected: {emoji} on message {message_id} by user {moderator_id}")
         
-        # Besonders wichtig: Prüfe, ob dieses message_id in pending_requests als Wert existiert
+        # Especially important: Check if this message_id exists as a value in pending_requests
         found_user_id = None
         for user_id, req_message_id in self.pending_requests.items():
             if req_message_id == message_id:
@@ -450,7 +566,7 @@ class QuingCraftBot(commands.Bot):
         if found_user_id is None:
             print(f"[REACTION] No matching request found for message {message_id}")
             
-            # Versuche trotzdem, die Nachricht zu finden und die User-ID zu extrahieren
+            # Try to find the message anyway and extract the user ID
             try:
                 channel = self.get_channel(payload.channel_id)
                 if not channel:
@@ -463,7 +579,7 @@ class QuingCraftBot(commands.Bot):
                     return
                 
                 embed = message.embeds[0]
-                # Überprüfe, ob es sich um eine Whitelist-Anfrage handelt
+                # Check if it's a whitelist request
                 if embed.title != MOD_REQUEST_TITLE:
                     print(f"[REACTION] Message is not a whitelist request")
                     return
@@ -471,12 +587,12 @@ class QuingCraftBot(commands.Bot):
                 desc = embed.description
                 
                 import re
-                match = re.search(r"<@(\d+)>", desc)
+                match = re.search(r"Discord: <@(\d+)>", desc)
                 if match:
                     found_user_id = int(match.group(1))
                     print(f"[REACTION] Extracted user ID from embed: {found_user_id}")
                     
-                    # Speichere für die Zukunft
+                    # Save for future use
                     self.pending_requests[found_user_id] = message_id
                 else:
                     print(f"[REACTION] Could not extract user ID from embed")
@@ -486,7 +602,7 @@ class QuingCraftBot(commands.Bot):
                 traceback.print_exc()
                 return
         
-        # Verarbeite die Reaktion basierend auf dem Emoji
+        # Process the reaction based on the emoji
         if emoji == "✅":
             print(f"[REACTION] Processing approval for user {found_user_id} by moderator {moderator_id}")
             await self._approve_whitelist_request_with_mod(found_user_id, payload.channel_id, moderator_id)
@@ -497,7 +613,7 @@ class QuingCraftBot(commands.Bot):
     async def _approve_whitelist_request_with_mod(self, user_id: int, channel_id: int, moderator_id: int) -> None:
         """Approve a whitelist request with moderator ID."""
         try:
-            # Hole die Anfrage aus der Datenbank
+            # Get the request from the database
             request = self.db.get_pending_request(user_id)
             if not request:
                 print(f"DEBUG: No pending request found for user {user_id}")
@@ -507,22 +623,22 @@ class QuingCraftBot(commands.Bot):
             minecraft_username = request[2]
             print(f"DEBUG: Processing whitelist approval for {minecraft_username} by moderator {moderator_id}")
             
-            # Versuche, den Spieler zur Whitelist hinzuzufügen
+            # Try to add the player to the whitelist
             print(f"DEBUG: Adding {minecraft_username} to whitelist")
             success = await self.rcon.whitelist_add(minecraft_username)
             
             if success:
                 print(f"DEBUG: Successfully added {minecraft_username} to whitelist")
                 
-                # Aktualisiere den Anfragestatus mit der Moderator-ID
+                # Update the request status with the moderator ID
                 db_success = self.db.update_request_status(request_id, "approved", moderator_id)
                 print(f"DEBUG: Database update result: {db_success}")
                 
-                # Entferne aus den ausstehenden Anfragen
+                # Remove from pending requests
                 if user_id in self.pending_requests:
                     del self.pending_requests[user_id]
                 
-                # Benachrichtige den Benutzer
+                # Notify the user
                 try:
                     discord_user = await self.fetch_user(user_id)
                     if discord_user:
@@ -533,7 +649,7 @@ class QuingCraftBot(commands.Bot):
             else:
                 print(f"DEBUG: Failed to add {minecraft_username} to whitelist")
                 
-                # Benachrichtige den Moderator über das Problem
+                # Notify the moderator about the problem
                 try:
                     channel = self.get_channel(channel_id)
                     if channel:
@@ -547,7 +663,7 @@ class QuingCraftBot(commands.Bot):
     async def _reject_whitelist_request_with_mod(self, user_id: int, moderator_id: int) -> None:
         """Reject a whitelist request with moderator ID."""
         try:
-            # Hole die Anfrage aus der Datenbank
+            # Get the request from the database
             request = self.db.get_pending_request(user_id)
             if not request:
                 print(f"DEBUG: No pending request found for user {user_id}")
@@ -557,15 +673,15 @@ class QuingCraftBot(commands.Bot):
             minecraft_username = request[2]
             print(f"DEBUG: Processing whitelist rejection for {minecraft_username} by moderator {moderator_id}")
             
-            # Aktualisiere den Anfragestatus mit der Moderator-ID
+            # Update the request status with the moderator ID
             db_success = self.db.update_request_status(request_id, "rejected", moderator_id)
             print(f"DEBUG: Database update result: {db_success}")
             
-            # Entferne aus den ausstehenden Anfragen
+            # Remove from pending requests
             if user_id in self.pending_requests:
                 del self.pending_requests[user_id]
             
-            # Benachrichtige den Benutzer
+            # Notify the user
             try:
                 discord_user = await self.fetch_user(user_id)
                 if discord_user:
@@ -576,49 +692,52 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"DEBUG: Error in _reject_whitelist_request_with_mod: {str(e)}")
             traceback.print_exc()
+    
+    async def check_reactions(self, message_id: int) -> None:
+        """Check reactions on a specific message."""
+        try:
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            mod_channel = self.get_channel(mod_channel_id)
+            
+            if not mod_channel:
+                print(f"Could not find mod channel with ID {mod_channel_id}")
+                return
+            
+            try:
+                message = await mod_channel.fetch_message(message_id)
+            except discord.NotFound:
+                print(f"Message {message_id} not found in channel {mod_channel_id}")
+                return
+            
+            if not message.reactions:
+                print(f"No reactions on message {message_id}")
+                return
+            
+            print(f"Found {len(message.reactions)} reactions on message {message_id}")
+            
+            for reaction in message.reactions:
+                print(f"Reaction: {reaction.emoji}, count: {reaction.count}")
+                async for user in reaction.users():
+                    print(f"- User: {user.name} ({user.id})")
+        except Exception as e:
+            print(f"Error checking reactions: {str(e)}")
+            traceback.print_exc()
 
-    # Direkte Debug-Commands
-    
-    @commands.command(name="debug_requests")
-    async def debug_requests_command(self, ctx):
-        """List all pending whitelist requests."""
-        requests_info = "Current pending requests:\n"
-        for user_id, msg_id in self.pending_requests.items():
-            requests_info += f"• User {user_id}: Message {msg_id}\n"
+    def setup_bot(self):
+        """Setup the bot and its commands."""
+        self.bot.add_cog(WhitelistCommands(self.bot))
+        self.bot.add_cog(DebugCommands(self.bot))
         
-        await ctx.send(requests_info if self.pending_requests else "No pending requests.")
-    
-    @commands.command(name="debug_reactions")
-    async def debug_reactions_command(self, ctx, message_id: int = None):
-        """Check reactions on a message."""
-        if not message_id:
-            await ctx.send("Please provide a message ID to check.")
-            return
-        
-        await ctx.send(f"Checking reactions on message {message_id}...")
-        await self.check_reactions(message_id)
-    
-    @commands.command(name="whitelist_force_add")
-    async def whitelist_force_add_command(self, ctx, username: str = None):
-        """Force add a user to the whitelist."""
-        if not username:
-            await ctx.send("Please provide a Minecraft username.")
-            return
-        
-        await ctx.send(f"Attempting to add {username} to whitelist...")
-        result = await self.rcon.whitelist_add(username)
-        await ctx.send(f"Result: {'Success' if result else 'Failed'}")
-    
-    @commands.command(name="whitelist_check")
-    async def whitelist_check_command(self, ctx, username: str = None):
-        """Check if a user is on the whitelist."""
-        if not username:
-            await ctx.send("Please provide a Minecraft username.")
-            return
-        
-        await ctx.send(f"Checking if {username} is on the whitelist...")
-        result = await self.rcon.whitelist_check(username)
-        await ctx.send(f"Result: {username} is {'on' if result else 'not on'} the whitelist.")
+        # Add command error handler
+        @self.bot.event
+        async def on_command_error(ctx, error):
+            if isinstance(error, commands.CommandNotFound):
+                return
+            elif isinstance(error, commands.CheckFailure):
+                await ctx.send(ERROR_PERMISSION_DENIED, delete_after=5)
+            else:
+                await ctx.send(f"{ERROR_PROCESSING} {str(error)}", delete_after=10)
+                logger.error(f"Command error: {error}")
 
 def main() -> None:
     """Start the bot."""

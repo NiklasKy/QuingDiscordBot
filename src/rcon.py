@@ -7,6 +7,7 @@ import asyncio
 from typing import Optional, Tuple
 import mcrcon
 from dotenv import load_dotenv
+import time
 
 load_dotenv()
 
@@ -51,7 +52,11 @@ class RconHandler:
             # If offline player, wait longer for UUID fetch from Mojang
             if "offline" in response.lower() or "fetching uuid" in response.lower():
                 logger.info(f"Player {username} is offline, waiting for UUID fetch...")
+                start_time = time.time()
+                logger.info(f"Starting first wait at {time.strftime('%H:%M:%S')} (5 seconds)")
                 await asyncio.sleep(5)  # Initial wait
+                end_time = time.time()
+                logger.info(f"Finished first wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
                 # First check after wait
                 if await self.whitelist_check(username):
@@ -60,7 +65,11 @@ class RconHandler:
                 
                 # If still not on the list, wait longer and check again (Mojang API can be slow)
                 logger.info(f"Player {username} not yet on whitelist, waiting longer...")
+                start_time = time.time()
+                logger.info(f"Starting second wait at {time.strftime('%H:%M:%S')} (10 seconds)")
                 await asyncio.sleep(10)
+                end_time = time.time()
+                logger.info(f"Finished second wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
                 if await self.whitelist_check(username):
                     logger.info(f"{username} was added to the whitelist after second wait")
@@ -68,7 +77,11 @@ class RconHandler:
                 
                 # One more check with longer wait
                 logger.info(f"Player {username} not yet on whitelist, final wait...")
+                start_time = time.time()
+                logger.info(f"Starting final wait at {time.strftime('%H:%M:%S')} (15 seconds)")
                 await asyncio.sleep(15)
+                end_time = time.time()
+                logger.info(f"Finished final wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
                 if await self.whitelist_check(username):
                     logger.info(f"{username} was added to the whitelist after final wait")
