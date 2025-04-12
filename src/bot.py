@@ -368,19 +368,83 @@ class QuingCraftBot(commands.Bot):
         """Remove duplicate whitelist commands to prevent confusion."""
         await self.wait_until_ready()
         
-        print("Cleaning up duplicate whitelist commands...")
+        print("Cleaning up duplicate whitelist commands using direct Discord API access...")
         
-        # Only attempt to remove the top-level 'whitelist' command
         try:
-            print("Removing standalone 'whitelist' command")
-            self.tree.remove_command("whitelist")
+            # 1. Get all global application commands
+            print("Fetching all global commands...")
+            app_id = self.application_id
+            http = self.http
             
-            # Sync the tree to apply changes
-            print("Syncing command tree to apply cleanup changes...")
+            # Get all global commands directly from Discord
+            global_commands = await http.request(
+                discord.http.Route('GET', '/applications/{app_id}/commands', app_id=app_id)
+            )
+            
+            print(f"Found {len(global_commands)} global commands")
+            for cmd in global_commands:
+                print(f"Global command: {cmd.get('name')} (ID: {cmd.get('id')})")
+                
+                # Delete the standalone whitelist command if it exists
+                if cmd.get('name') == 'whitelist':
+                    print(f"Deleting global whitelist command ID: {cmd.get('id')}")
+                    await http.request(
+                        discord.http.Route(
+                            'DELETE', 
+                            '/applications/{app_id}/commands/{cmd_id}', 
+                            app_id=app_id, 
+                            cmd_id=cmd.get('id')
+                        )
+                    )
+                    print("Global whitelist command deleted")
+            
+            # 2. Get guild commands for each guild the bot is in
+            for guild in self.guilds:
+                print(f"Checking guild: {guild.name} (ID: {guild.id})")
+                guild_id = guild.id
+                
+                # Get guild commands
+                guild_commands = await http.request(
+                    discord.http.Route(
+                        'GET', 
+                        '/applications/{app_id}/guilds/{guild_id}/commands', 
+                        app_id=app_id, 
+                        guild_id=guild_id
+                    )
+                )
+                
+                print(f"Found {len(guild_commands)} commands in guild {guild.name}")
+                for cmd in guild_commands:
+                    print(f"Guild command: {cmd.get('name')} (ID: {cmd.get('id')})")
+                    
+                    # Delete the standalone whitelist command if it exists
+                    if cmd.get('name') == 'whitelist':
+                        print(f"Deleting guild whitelist command ID: {cmd.get('id')}")
+                        await http.request(
+                            discord.http.Route(
+                                'DELETE', 
+                                '/applications/{app_id}/guilds/{guild_id}/commands/{cmd_id}', 
+                                app_id=app_id, 
+                                guild_id=guild_id, 
+                                cmd_id=cmd.get('id')
+                            )
+                        )
+                        print(f"Guild whitelist command deleted from {guild.name}")
+            
+            # 3. Remove the command from local tree and sync again
+            try:
+                print("Removing whitelist command from local command tree...")
+                self.tree.remove_command("whitelist")
+            except Exception as e:
+                print(f"Error removing from local tree: {e}")
+            
+            # 4. Final sync to ensure all changes take effect
+            print("Syncing command tree to apply all changes...")
             await self.tree.sync()
+            
             print("Command cleanup complete!")
         except Exception as e:
-            print(f"Error removing 'whitelist' command: {e}")
+            print(f"Error during command cleanup: {e}")
             traceback.print_exc()
             
             # Try to sync anyway
