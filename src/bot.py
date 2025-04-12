@@ -370,40 +370,25 @@ class QuingCraftBot(commands.Bot):
         
         print("Cleaning up duplicate whitelist commands...")
         
-        # Get all commands, both global and guild-specific
-        commands = await self.tree.fetch_commands()
-        print(f"Found {len(commands)} global commands")
-        
-        # Look for any standalone 'whitelist' commands
-        for cmd in commands:
-            print(f"Command: {cmd.name} (type: {type(cmd).__name__})")
-            if cmd.name == "whitelist":
-                print(f"Removing standalone command: {cmd.name}")
-                self.tree.remove_command("whitelist", type=None)
-        
-        # Check for nested whitelist commands
-        for cmd in self.tree.get_commands():
-            print(f"Root command: {cmd.name} (type: {type(cmd).__name__})")
-            if isinstance(cmd, app_commands.Group):
-                for subcmd in cmd.commands:
-                    print(f"- Subcommand of {cmd.name}: {subcmd.name}")
-        
-        # Remove any residual 'whitelist add/remove' commands that aren't in our QC group
-        # Using a more low-level approach based on command name matching
+        # Only attempt to remove the top-level 'whitelist' command
         try:
-            # Implementation of low-level command removal similar to GatekeeperV2
-            for command in self.tree._global_commands.copy().values():
-                if command.name == "whitelist":
-                    print(f"Removing global command: {command.name}")
-                    del self.tree._global_commands[command.name]
+            print("Removing standalone 'whitelist' command")
+            self.tree.remove_command("whitelist")
+            
+            # Sync the tree to apply changes
+            print("Syncing command tree to apply cleanup changes...")
+            await self.tree.sync()
+            print("Command cleanup complete!")
         except Exception as e:
-            print(f"Error during command cleanup: {e}")
+            print(f"Error removing 'whitelist' command: {e}")
             traceback.print_exc()
-        
-        # Sync the command tree to apply changes
-        print("Syncing command tree to apply cleanup changes...")
-        await self.tree.sync()
-        print("Command cleanup complete!")
+            
+            # Try to sync anyway
+            try:
+                await self.tree.sync()
+            except Exception as sync_error:
+                print(f"Error syncing commands: {sync_error}")
+                traceback.print_exc()
     
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
