@@ -40,46 +40,96 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
         max_length=16
     )
     
+    reason = discord.ui.TextInput(
+        label="Reason for joining",
+        placeholder="Tell us why you want to join our server...",
+        required=False,
+        max_length=500,
+        style=discord.TextStyle.paragraph
+    )
+    
     def __init__(self, bot: commands.Bot) -> None:
         super().__init__()
         self.bot = bot
     
     async def on_submit(self, interaction: discord.Interaction) -> None:
-        """Handle modal submission."""
-        username = self.username.value.strip()
+        """Process the submitted modal."""
+        minecraft_username = self.username.value
+        reason = self.reason.value  # Die Begründung erfassen
         
-        # Verify Minecraft username
-        if not await self.bot.verify_minecraft_username(username):
-            await interaction.response.send_message(WHITELIST_INVALID_NAME, ephemeral=True)
+        user = interaction.user
+        print(f"Whitelist request from {user.name} ({user.id}) for username: {minecraft_username}")
+        
+        # Überprüfe, ob der Discord-Benutzer bereits eine ausstehende Anfrage hat
+        pending_request = self.bot.db.get_pending_request(user.id)
+        
+        if pending_request:
+            print(f"User {user.name} already has a pending request: {pending_request}")
+            await interaction.response.send_message(
+                "Du hast bereits eine ausstehende Whitelist-Anfrage. Bitte warte, bis sie bearbeitet wurde.",
+                ephemeral=True
+            )
             return
         
-        # Check for existing pending request
-        existing_request = self.bot.db.get_pending_request(interaction.user.id)
-        if existing_request:
-            await interaction.response.send_message(WHITELIST_PENDING, ephemeral=True)
+        # Überprüfe, ob der Minecraft-Benutzername bereits in Verwendung ist
+        existing_username_request = self.bot.db.get_request_by_minecraft_username(minecraft_username)
+        if existing_username_request and existing_username_request[3] == "pending":
+            await interaction.response.send_message(
+                f"Es gibt bereits eine ausstehende Anfrage für den Benutzernamen '{minecraft_username}'. "
+                f"Bitte wähle einen anderen Benutzernamen oder warte, bis die bestehende Anfrage bearbeitet wurde.",
+                ephemeral=True
+            )
             return
         
-        # Add to database
-        if self.bot.db.add_whitelist_request(interaction.user.id, username):
-            # Send to mod channel
-            mod_channel = self.bot.get_channel(int(os.getenv("MOD_CHANNEL_ID")))
-            if mod_channel:
-                embed = discord.Embed(
-                    title=MOD_REQUEST_TITLE,
-                    description=MOD_REQUEST_DESCRIPTION.format(
-                        discord_user=interaction.user.mention,
-                        minecraft_username=username
-                    ),
-                    color=discord.Color.orange()
-                )
-                mod_message = await mod_channel.send(embed=embed)
-                await mod_message.add_reaction("✅")
-                await mod_message.add_reaction("❌")
-                self.bot.pending_requests[interaction.user.id] = mod_message.id
-            
-            await interaction.response.send_message(WHITELIST_SUCCESS, ephemeral=True)
-        else:
-            await interaction.response.send_message(ERROR_DATABASE, ephemeral=True)
+        # Bestätige dem Benutzer, dass die Anfrage eingegangen ist
+        await interaction.response.send_message(
+            "Deine Whitelist-Anfrage wurde eingereicht! Du wirst benachrichtigt, sobald sie bearbeitet wurde.",
+            ephemeral=True
+        )
+        
+        # Füge die Anfrage in die Datenbank ein
+        added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason)
+        if not added_request:
+            print(f"Failed to add whitelist request to database for {user.name}")
+            await user.send("Es gab ein Problem bei der Verarbeitung deiner Anfrage. Bitte versuche es später erneut.")
+            return
+        
+        # Sende die Anfrage an den Moderator-Kanal
+        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+        mod_channel = interaction.client.get_channel(mod_channel_id)
+        
+        if not mod_channel:
+            print(f"Could not find mod channel with ID {mod_channel_id}")
+            await user.send("Es gab ein Problem bei der Weiterleitung deiner Anfrage. Bitte kontaktiere einen Administrator.")
+            return
+        
+        account_created = user.created_at.strftime("%d.%m.%Y")
+        joined_server = user.joined_at.strftime("%d.%m.%Y") if user.joined_at else "Unbekannt"
+        
+        # Erstelle das Embed für die Moderatoren
+        embed = discord.Embed(
+            title=MOD_REQUEST_TITLE,
+            description=f"Whitelist-Anfrage für **{minecraft_username}**\n"
+                        f"Discord: <@{user.id}> ({user.name})\n"
+                        f"Account erstellt: {account_created}\n"
+                        f"Server beigetreten: {joined_server}",
+            color=0x3498db
+        )
+
+        # Füge die Begründung hinzu, wenn vorhanden
+        if reason:
+            embed.add_field(name="Begründung", value=reason, inline=False)
+        
+        # Sende das Embed an den Moderator-Kanal
+        message = await mod_channel.send(embed=embed)
+        
+        # Füge die Reaktionen hinzu
+        await message.add_reaction("✅")
+        await message.add_reaction("❌")
+        
+        # Speichere die Nachricht-ID für später
+        self.bot.pending_requests[user.id] = message.id
+        print(f"Added pending request for {user.id}: {message.id}")
 
 class WhitelistView(discord.ui.View):
     """View containing the whitelist button."""
@@ -363,8 +413,9 @@ class QuingCraftBot(commands.Bot):
         
         emoji = str(payload.emoji)
         message_id = payload.message_id
+        moderator_id = payload.user_id  # ID des Moderators, der reagiert hat
         
-        print(f"[REACTION] Detected: {emoji} on message {message_id} by user {payload.user_id}")
+        print(f"[REACTION] Detected: {emoji} on message {message_id} by user {moderator_id}")
         
         # Besonders wichtig: Prüfe, ob dieses message_id in pending_requests als Wert existiert
         found_user_id = None
@@ -415,14 +466,14 @@ class QuingCraftBot(commands.Bot):
         
         # Verarbeite die Reaktion basierend auf dem Emoji
         if emoji == "✅":
-            print(f"[REACTION] Processing approval for user {found_user_id}")
-            await self._approve_whitelist_request(found_user_id, payload.channel_id)
+            print(f"[REACTION] Processing approval for user {found_user_id} by moderator {moderator_id}")
+            await self._approve_whitelist_request_with_mod(found_user_id, payload.channel_id, moderator_id)
         elif emoji == "❌":
-            print(f"[REACTION] Processing rejection for user {found_user_id}")
-            await self._reject_whitelist_request(found_user_id)
+            print(f"[REACTION] Processing rejection for user {found_user_id} by moderator {moderator_id}")
+            await self._reject_whitelist_request_with_mod(found_user_id, moderator_id)
     
-    async def _approve_whitelist_request(self, user_id: int, channel_id: int) -> None:
-        """Approve a whitelist request."""
+    async def _approve_whitelist_request_with_mod(self, user_id: int, channel_id: int, moderator_id: int) -> None:
+        """Approve a whitelist request with moderator ID."""
         try:
             # Hole die Anfrage aus der Datenbank
             request = self.db.get_pending_request(user_id)
@@ -432,7 +483,7 @@ class QuingCraftBot(commands.Bot):
             
             request_id = request[0]
             minecraft_username = request[2]
-            print(f"DEBUG: Processing whitelist approval for {minecraft_username}")
+            print(f"DEBUG: Processing whitelist approval for {minecraft_username} by moderator {moderator_id}")
             
             # Versuche, den Spieler zur Whitelist hinzuzufügen
             print(f"DEBUG: Adding {minecraft_username} to whitelist")
@@ -441,8 +492,8 @@ class QuingCraftBot(commands.Bot):
             if success:
                 print(f"DEBUG: Successfully added {minecraft_username} to whitelist")
                 
-                # Aktualisiere den Anfragestatus
-                db_success = self.db.update_request_status(request_id, "approved")
+                # Aktualisiere den Anfragestatus mit der Moderator-ID
+                db_success = self.db.update_request_status(request_id, "approved", moderator_id)
                 print(f"DEBUG: Database update result: {db_success}")
                 
                 # Entferne aus den ausstehenden Anfragen
@@ -468,11 +519,11 @@ class QuingCraftBot(commands.Bot):
                 except Exception as e:
                     print(f"DEBUG: Error sending error message: {str(e)}")
         except Exception as e:
-            print(f"DEBUG: Error in _approve_whitelist_request: {str(e)}")
+            print(f"DEBUG: Error in _approve_whitelist_request_with_mod: {str(e)}")
             traceback.print_exc()
     
-    async def _reject_whitelist_request(self, user_id: int) -> None:
-        """Reject a whitelist request."""
+    async def _reject_whitelist_request_with_mod(self, user_id: int, moderator_id: int) -> None:
+        """Reject a whitelist request with moderator ID."""
         try:
             # Hole die Anfrage aus der Datenbank
             request = self.db.get_pending_request(user_id)
@@ -482,10 +533,10 @@ class QuingCraftBot(commands.Bot):
             
             request_id = request[0]
             minecraft_username = request[2]
-            print(f"DEBUG: Processing whitelist rejection for {minecraft_username}")
+            print(f"DEBUG: Processing whitelist rejection for {minecraft_username} by moderator {moderator_id}")
             
-            # Aktualisiere den Anfragestatus
-            db_success = self.db.update_request_status(request_id, "rejected")
+            # Aktualisiere den Anfragestatus mit der Moderator-ID
+            db_success = self.db.update_request_status(request_id, "rejected", moderator_id)
             print(f"DEBUG: Database update result: {db_success}")
             
             # Entferne aus den ausstehenden Anfragen
@@ -501,7 +552,7 @@ class QuingCraftBot(commands.Bot):
             except Exception as e:
                 print(f"DEBUG: Error sending message to user: {str(e)}")
         except Exception as e:
-            print(f"DEBUG: Error in _reject_whitelist_request: {str(e)}")
+            print(f"DEBUG: Error in _reject_whitelist_request_with_mod: {str(e)}")
             traceback.print_exc()
 
     # Direkte Debug-Commands

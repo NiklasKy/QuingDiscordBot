@@ -33,7 +33,11 @@ class Database:
                     discord_id BIGINT NOT NULL,
                     minecraft_username VARCHAR(16) NOT NULL,
                     status VARCHAR(10) NOT NULL DEFAULT 'pending',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reason TEXT,
+                    approved_by BIGINT,
+                    rejected_by BIGINT,
+                    processed_at TIMESTAMP
                 )
             """)
             self.conn.commit()
@@ -56,6 +60,23 @@ class Database:
                     """)
                     print("Removed unique constraint on discord_id and status")
                 
+                # Prüfen, ob die neuen Spalten bereits existieren
+                cur.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'whitelist_requests' AND column_name = 'reason'
+                """)
+                if not cur.fetchone():
+                    # Spalten hinzufügen, wenn sie nicht existieren
+                    cur.execute("""
+                        ALTER TABLE whitelist_requests
+                        ADD COLUMN reason TEXT,
+                        ADD COLUMN approved_by BIGINT,
+                        ADD COLUMN rejected_by BIGINT,
+                        ADD COLUMN processed_at TIMESTAMP
+                    """)
+                    print("Added new columns to whitelist_requests table")
+                
                 # Entfernen der potenziell problematischen unique index auf minecraft_username
                 cur.execute("""
                     SELECT 1 FROM pg_indexes 
@@ -73,7 +94,7 @@ class Database:
             print(f"Error updating schema: {e}")
             self.conn.rollback()
     
-    def add_whitelist_request(self, discord_id: int, minecraft_username: str) -> bool:
+    def add_whitelist_request(self, discord_id: int, minecraft_username: str, reason: str = None) -> bool:
         """Add a new whitelist request to the database."""
         try:
             with self.conn.cursor() as cur:
@@ -119,10 +140,10 @@ class Database:
                 
                 # Neuen Antrag hinzufügen
                 cur.execute("""
-                    INSERT INTO whitelist_requests (discord_id, minecraft_username, status)
-                    VALUES (%s, %s, 'pending')
+                    INSERT INTO whitelist_requests (discord_id, minecraft_username, status, reason)
+                    VALUES (%s, %s, 'pending', %s)
                     RETURNING id
-                """, (discord_id, minecraft_username))
+                """, (discord_id, minecraft_username, reason))
                 self.conn.commit()
                 result = cur.fetchone()
                 return result is not None
@@ -145,15 +166,30 @@ class Database:
             self.conn.rollback()
             return None
     
-    def update_request_status(self, request_id: int, status: str) -> bool:
+    def update_request_status(self, request_id: int, status: str, moderator_id: int = None) -> bool:
         """Update the status of a whitelist request."""
         try:
             with self.conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE whitelist_requests
-                    SET status = %s
-                    WHERE id = %s
-                """, (status, request_id))
+                # Je nach Status den entsprechenden Moderator setzen
+                if status == 'approved':
+                    cur.execute("""
+                        UPDATE whitelist_requests
+                        SET status = %s, approved_by = %s, processed_at = NOW()
+                        WHERE id = %s
+                    """, (status, moderator_id, request_id))
+                elif status == 'rejected':
+                    cur.execute("""
+                        UPDATE whitelist_requests
+                        SET status = %s, rejected_by = %s, processed_at = NOW()
+                        WHERE id = %s
+                    """, (status, moderator_id, request_id))
+                else:
+                    cur.execute("""
+                        UPDATE whitelist_requests
+                        SET status = %s
+                        WHERE id = %s
+                    """, (status, request_id))
+                
                 self.conn.commit()
                 return cur.rowcount > 0
         except Exception as e:
@@ -161,7 +197,7 @@ class Database:
             self.conn.rollback()
             return False
     
-    def approve_request(self, discord_id: int) -> Tuple[bool, Optional[str]]:
+    def approve_request(self, discord_id: int, moderator_id: int = None) -> Tuple[bool, Optional[str]]:
         """Approve a whitelist request. Returns (success, minecraft_username)."""
         try:
             with self.conn.cursor() as cur:
@@ -198,9 +234,9 @@ class Database:
                 # Aktualisieren des Status auf "approved"
                 cur.execute("""
                     UPDATE whitelist_requests
-                    SET status = 'approved'
+                    SET status = 'approved', approved_by = %s, processed_at = NOW()
                     WHERE id = %s
-                """, (request_id,))
+                """, (moderator_id, request_id))
                 self.conn.commit()
                 print(f"Approved request for {minecraft_username}")
                 return True, minecraft_username
@@ -209,7 +245,7 @@ class Database:
             self.conn.rollback()
             return False, None
 
-    def reject_request(self, discord_id: int) -> Tuple[bool, Optional[str]]:
+    def reject_request(self, discord_id: int, moderator_id: int = None) -> Tuple[bool, Optional[str]]:
         """Reject a whitelist request. Returns (success, minecraft_username)."""
         try:
             with self.conn.cursor() as cur:
@@ -228,9 +264,9 @@ class Database:
                 
                 cur.execute("""
                     UPDATE whitelist_requests
-                    SET status = 'rejected'
+                    SET status = 'rejected', rejected_by = %s, processed_at = NOW()
                     WHERE id = %s
-                """, (request_id,))
+                """, (moderator_id, request_id))
                 self.conn.commit()
                 print(f"Rejected request ID {request_id} for {minecraft_username}")
                 return True, minecraft_username

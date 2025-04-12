@@ -27,175 +27,102 @@ class RconHandler:
         logger.info(f"Initialized RCON handler for {self.host}:{self.port}")
     
     async def whitelist_add(self, username: str) -> bool:
-        """Add a player to the server whitelist."""
+        """
+        Add a player to the whitelist
+        
+        Args:
+            username: The username to add to the whitelist
+            
+        Returns:
+            bool: True if the player was added, False otherwise
+        """
+        logger.info(f"Adding {username} to the whitelist")
+        
+        # Check if already whitelisted
+        if await self.whitelist_check(username):
+            logger.info(f"{username} is already on the whitelist")
+            return True
+        
+        # Try to add the player to the whitelist
         try:
-            logger.info(f"Attempting to add {username} to whitelist")
-            self.rcon.connect()
+            response = await self.execute_command(f"vpw add {username}")
+            logger.info(f"Whitelist add response: {response}")
             
-            # Zuerst prüfen, ob der Spieler bereits auf der Whitelist steht
-            whitelist_response = self.rcon.command("vpw list")
-            logger.info(f"Current whitelist: {whitelist_response}")
-            
-            if username.lower() in whitelist_response.lower():
-                logger.info(f"Player {username} is already on the whitelist")
-                self.rcon.disconnect()
+            # Verify the player was added
+            if await self.whitelist_check(username):
+                logger.info(f"{username} was added to the whitelist")
                 return True
             
-            # Direkter vpw-Befehl ohne Präfix
-            response = self.rcon.command(f"vpw add {username}")
-            logger.info(f"RCON response: {response}")
+            # If player is offline, the command might fail, try again
+            logger.warning(f"Failed to add {username} to the whitelist, retrying")
+            response = await self.execute_command(f"vpw add {username}")
+            logger.info(f"Whitelist add retry response: {response}")
             
-            # Wenn der Spieler offline ist und die UUID abgerufen wird, warten wir und prüfen dann die Whitelist
-            if "player is offline, fetching uuid" in response.lower() or "fetching uuid from mojang" in response.lower():
-                logger.info("Player is offline, fetching UUID. Waiting for the operation to complete...")
-                
-                # Nur 3 Versuche mit kürzeren Wartezeiten
-                max_retries = 3
-                wait_times = [5, 10, 10]  # Wartezeiten in Sekunden
-                
-                self.rcon.disconnect()
-                
-                for i in range(max_retries):
-                    wait_time = wait_times[i]
-                    logger.info(f"Waiting {wait_time} seconds before retry {i+1}/{max_retries}...")
-                    await asyncio.sleep(wait_time)
-                    
-                    # Erneut verbinden und prüfen
-                    self.rcon.connect()
-                    check_response = self.rcon.command("vpw list")
-                    logger.info(f"Whitelist check attempt {i+1}: {check_response}")
-                    
-                    # Prüfe, ob der Spieler jetzt auf der Liste steht
-                    if username.lower() in check_response.lower():
-                        logger.info(f"Player {username} was successfully added to the whitelist on attempt {i+1}")
-                        self.rcon.disconnect()
-                        return True
-                    
-                    # Falls nicht, versuchen wir es erneut hinzuzufügen
-                    if i < max_retries - 1:  # Beim letzten Versuch kein erneutes Hinzufügen
-                        logger.info(f"Retry {i+1}: Attempting to add {username} again...")
-                        retry_response = self.rcon.command(f"vpw add {username}")
-                        logger.info(f"Retry {i+1} response: {retry_response}")
-                    
-                    self.rcon.disconnect()
-                
-                # Letzte Überprüfung
-                self.rcon.connect()
-                final_check = self.rcon.command("vpw list")
-                logger.info(f"Final whitelist check after {max_retries} attempts: {final_check}")
-                
-                success = username.lower() in final_check.lower()
-                logger.info(f"Final whitelist add result for {username}: {success}")
-                
-                self.rcon.disconnect()
-                return success
-            
-            # Direkte Erfolgsantwort
-            success_patterns = ["added", "added to whitelist"]
-            direct_success = any(pattern in response.lower() for pattern in success_patterns)
-            
-            if direct_success:
-                logger.info(f"Player {username} directly added to whitelist")
+            # Check again
+            if await self.whitelist_check(username):
+                logger.info(f"{username} was added to the whitelist after retry")
                 return True
             
-            # Prüfen, ob der Spieler trotz unklarer Antwort hinzugefügt wurde
-            check_response = self.rcon.command("vpw list")
-            if username.lower() in check_response.lower():
-                logger.info(f"Player {username} is on the whitelist after command, despite unclear response")
-                return True
-            
-            # Wenn wir hier ankommen, war die Operation wahrscheinlich nicht erfolgreich
-            logger.warning(f"Whitelist add operation may have failed for {username}")
-            return False
-        except ConnectionRefusedError:
-            logger.error("RCON connection refused. Is the Minecraft server running?")
-            return False
-        except TimeoutError:
-            logger.error("RCON connection timed out. Is the server reachable?")
+            logger.error(f"Failed to add {username} to the whitelist after retry")
             return False
         except Exception as e:
-            logger.error(f"RCON error: {str(e)}")
+            logger.error(f"Error adding {username} to the whitelist: {e}")
             return False
-        finally:
-            try:
-                self.rcon.disconnect()
-            except:
-                pass
     
     async def whitelist_remove(self, username: str) -> bool:
-        """Remove a player from the server whitelist."""
+        """
+        Remove a player from the whitelist
+        
+        Args:
+            username: The username to remove from the whitelist
+            
+        Returns:
+            bool: True if the player was removed, False otherwise
+        """
+        logger.info(f"Removing {username} from the whitelist")
+        
+        # Check if already not on the whitelist
+        if not await self.whitelist_check(username):
+            logger.info(f"{username} is not on the whitelist")
+            return True
+        
+        # Try to remove the player from the whitelist
         try:
-            logger.info(f"Attempting to remove {username} from whitelist")
-            self.rcon.connect()
+            response = await self.execute_command(f"vpw remove {username}")
+            logger.info(f"Whitelist remove response: {response}")
             
-            # Zuerst prüfen, ob der Spieler auf der Whitelist steht
-            whitelist_response = self.rcon.command("vpw list")
-            logger.info(f"Current whitelist: {whitelist_response}")
-            
-            if username.lower() not in whitelist_response.lower():
-                logger.info(f"Player {username} is not on the whitelist")
-                self.rcon.disconnect()
-                return True  # Bereits nicht auf der Liste = Erfolg
-            
-            # Direkter vpw-Befehl ohne Präfix
-            response = self.rcon.command(f"vpw remove {username}")
-            logger.info(f"RCON response: {response}")
-            
-            # Auf erfolgreiche Entfernung prüfen
-            success_patterns = ["removed", "removed from whitelist"]
-            direct_success = any(pattern in response.lower() for pattern in success_patterns)
-            
-            if direct_success:
-                logger.info(f"Player {username} removed from whitelist")
+            # Verify the player was removed
+            if not await self.whitelist_check(username):
+                logger.info(f"{username} was removed from the whitelist")
                 return True
             
-            # Bei Unklarheit noch einmal die Whitelist prüfen
-            check_response = self.rcon.command("vpw list")
-            logger.info(f"Whitelist after remove attempt: {check_response}")
-            
-            # Prüfen, ob der Spieler jetzt von der Liste entfernt wurde
-            success = username.lower() not in check_response.lower()
-            logger.info(f"Whitelist remove result for {username}: {success}")
-            
-            return success
-        except ConnectionRefusedError:
-            logger.error("RCON connection refused. Is the Minecraft server running?")
-            return False
-        except TimeoutError:
-            logger.error("RCON connection timed out. Is the server reachable?")
+            logger.error(f"Failed to remove {username} from the whitelist")
             return False
         except Exception as e:
-            logger.error(f"RCON error: {str(e)}")
+            logger.error(f"Error removing {username} from the whitelist: {e}")
             return False
-        finally:
-            try:
-                self.rcon.disconnect()
-            except:
-                pass
-
+    
     async def whitelist_check(self, username: str) -> bool:
-        """Check if a player is on the whitelist."""
+        """
+        Check if a player is on the whitelist
+        
+        Args:
+            username: The username to check
+            
+        Returns:
+            bool: True if the player is on the whitelist, False otherwise
+        """
+        logger.info(f"Checking if {username} is on the whitelist")
+        
         try:
-            logger.info(f"Checking if {username} is on the whitelist")
-            self.rcon.connect()
+            response = await self.execute_command(f"vpw list")
+            logger.info(f"Whitelist check response: {response}")
             
-            # Whitelist abfragen
-            whitelist_response = self.rcon.command("vpw list")
-            logger.info(f"Current whitelist: {whitelist_response}")
-            
-            # Prüfen, ob der Spielername in der Antwort enthalten ist
-            is_whitelisted = username.lower() in whitelist_response.lower()
-            logger.info(f"Player {username} is {'on' if is_whitelisted else 'not on'} the whitelist")
-            
-            return is_whitelisted
+            # Parse the response and check if the username is in it
+            return username.lower() in response.lower()
         except Exception as e:
-            logger.error(f"RCON error during whitelist check: {str(e)}")
+            logger.error(f"Error checking if {username} is on the whitelist: {e}")
             return False
-        finally:
-            try:
-                self.rcon.disconnect()
-            except:
-                pass
 
     async def execute_command(self, command: str) -> str:
         """Execute a custom RCON command."""
