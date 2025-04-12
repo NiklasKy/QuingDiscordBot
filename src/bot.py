@@ -219,9 +219,17 @@ class AdminCommands(commands.Cog):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
-        # Use vpw command
-        response = await self.bot.rcon.execute_command(f"vpw add {username}")
-        await interaction.response.send_message(WHITELIST_COMMAND_SUCCESS.format(response=response), ephemeral=True)
+        # Acknowledge the command received before long-running operations
+        await interaction.response.defer(ephemeral=True)
+        
+        # Use the more robust whitelist_add method from the RCON handler
+        result = await self.bot.rcon.whitelist_add(username)
+        
+        # Send the result back to the user
+        if result:
+            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username), ephemeral=True)
+        else:
+            await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.", ephemeral=True)
     
     async def whitelist_remove(self, interaction: discord.Interaction, username: str):
         """Remove a player from the whitelist."""
@@ -230,9 +238,17 @@ class AdminCommands(commands.Cog):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
-        # Use vpw command
-        response = await self.bot.rcon.execute_command(f"vpw remove {username}")
-        await interaction.response.send_message(WHITELIST_COMMAND_SUCCESS.format(response=response), ephemeral=True)
+        # Acknowledge the command received before long-running operations
+        await interaction.response.defer(ephemeral=True)
+        
+        # Use the more robust whitelist_remove method from the RCON handler
+        result = await self.bot.rcon.whitelist_remove(username)
+        
+        # Send the result back to the user
+        if result:
+            await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username), ephemeral=True)
+        else:
+            await interaction.followup.send(f"Failed to remove {username} from the whitelist. Check the logs for details.", ephemeral=True)
 
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
@@ -354,21 +370,35 @@ class QuingCraftBot(commands.Bot):
         
         print("Cleaning up duplicate whitelist commands...")
         
-        # Get all global commands
+        # Get all commands, both global and guild-specific
         commands = await self.tree.fetch_commands()
+        print(f"Found {len(commands)} global commands")
         
-        # Look for any standalone 'whitelist' commands that might conflict
+        # Look for any standalone 'whitelist' commands
         for cmd in commands:
-            if cmd.name == "whitelist" and not isinstance(cmd, app_commands.Group):
-                print(f"Removing duplicate command: {cmd.name}")
-                self.tree.remove_command(cmd.name)
+            print(f"Command: {cmd.name} (type: {type(cmd).__name__})")
+            if cmd.name == "whitelist":
+                print(f"Removing standalone command: {cmd.name}")
+                self.tree.remove_command("whitelist", type=None)
         
-        # Also check for potential 'whitelist add/remove' duplicates in direct or nested structures
+        # Check for nested whitelist commands
         for cmd in self.tree.get_commands():
-            if isinstance(cmd, app_commands.Group) and cmd.name == "whitelist":
-                print(f"Found whitelist group: {cmd.name}")
+            print(f"Root command: {cmd.name} (type: {type(cmd).__name__})")
+            if isinstance(cmd, app_commands.Group):
                 for subcmd in cmd.commands:
-                    print(f"- Subcommand: {subcmd.name}")
+                    print(f"- Subcommand of {cmd.name}: {subcmd.name}")
+        
+        # Remove any residual 'whitelist add/remove' commands that aren't in our QC group
+        # Using a more low-level approach based on command name matching
+        try:
+            # Implementation of low-level command removal similar to GatekeeperV2
+            for command in self.tree._global_commands.copy().values():
+                if command.name == "whitelist":
+                    print(f"Removing global command: {command.name}")
+                    del self.tree._global_commands[command.name]
+        except Exception as e:
+            print(f"Error during command cleanup: {e}")
+            traceback.print_exc()
         
         # Sync the command tree to apply changes
         print("Syncing command tree to apply cleanup changes...")

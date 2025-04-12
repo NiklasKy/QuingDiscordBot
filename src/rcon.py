@@ -53,8 +53,8 @@ class RconHandler:
             if "offline" in response.lower() or "fetching uuid" in response.lower():
                 logger.info(f"Player {username} is offline, waiting for UUID fetch...")
                 start_time = time.time()
-                logger.info(f"Starting first wait at {time.strftime('%H:%M:%S')} (5 seconds)")
-                await asyncio.sleep(5)  # Initial wait
+                logger.info(f"Starting first wait at {time.strftime('%H:%M:%S')} (10 seconds)")
+                await asyncio.sleep(10)  # Longer initial wait
                 end_time = time.time()
                 logger.info(f"Finished first wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
@@ -66,8 +66,8 @@ class RconHandler:
                 # If still not on the list, wait longer and check again (Mojang API can be slow)
                 logger.info(f"Player {username} not yet on whitelist, waiting longer...")
                 start_time = time.time()
-                logger.info(f"Starting second wait at {time.strftime('%H:%M:%S')} (10 seconds)")
-                await asyncio.sleep(10)
+                logger.info(f"Starting second wait at {time.strftime('%H:%M:%S')} (15 seconds)")
+                await asyncio.sleep(15)
                 end_time = time.time()
                 logger.info(f"Finished second wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
@@ -78,8 +78,8 @@ class RconHandler:
                 # One more check with longer wait
                 logger.info(f"Player {username} not yet on whitelist, final wait...")
                 start_time = time.time()
-                logger.info(f"Starting final wait at {time.strftime('%H:%M:%S')} (15 seconds)")
-                await asyncio.sleep(15)
+                logger.info(f"Starting final wait at {time.strftime('%H:%M:%S')} (20 seconds)")
+                await asyncio.sleep(20)
                 end_time = time.time()
                 logger.info(f"Finished final wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
                 
@@ -165,18 +165,44 @@ class RconHandler:
                 logger.info(f"{username} was considered removed from the whitelist based on response")
                 return True
             
-            # Wait a bit longer and check again
-            logger.info(f"Player {username} still appears on whitelist, waiting longer...")
-            await asyncio.sleep(5)
-            
-            if not await self.whitelist_check(username):
-                logger.info(f"{username} was removed from the whitelist after waiting")
-                return True
-            
-            # If the list command is unreliable, we'll assume success if the command executed without errors
-            if "error" not in response.lower() and "unknown command" not in response.lower():
-                logger.warning(f"Player {username} still detected in whitelist, but assuming success based on RCON response")
-                return True
+            # Check for offline player message
+            if "offline" in response.lower() or "fetching uuid" in response.lower():
+                logger.info(f"Player {username} is offline, waiting longer for removal...")
+                
+                # Wait longer for offline players
+                start_time = time.time()
+                logger.info(f"Starting first wait at {time.strftime('%H:%M:%S')} (10 seconds)")
+                await asyncio.sleep(10)  # Longer wait for offline players
+                end_time = time.time()
+                logger.info(f"Finished first wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
+                
+                if not await self.whitelist_check(username):
+                    logger.info(f"{username} was removed from the whitelist after waiting")
+                    return True
+                
+                # Additional wait if still not removed
+                start_time = time.time()
+                logger.info(f"Starting final wait at {time.strftime('%H:%M:%S')} (15 seconds)")
+                await asyncio.sleep(15)
+                end_time = time.time()
+                logger.info(f"Finished final wait at {time.strftime('%H:%M:%S')} (actual duration: {end_time - start_time:.2f}s)")
+                
+                if not await self.whitelist_check(username):
+                    logger.info(f"{username} was removed from the whitelist after final wait")
+                    return True
+                
+                # If the whitelist_check still shows the player, but there was no error in response
+                if "error" not in response.lower() and "unknown command" not in response.lower():
+                    logger.warning(f"Player {username} still detected in whitelist, but assuming success based on RCON response for offline player")
+                    return True
+            else:
+                # Wait a bit longer and check again
+                logger.info(f"Player {username} still appears on whitelist, waiting longer...")
+                await asyncio.sleep(5)
+                
+                if not await self.whitelist_check(username):
+                    logger.info(f"{username} was removed from the whitelist after waiting")
+                    return True
             
             logger.error(f"Failed to remove {username} from the whitelist")
             return False
