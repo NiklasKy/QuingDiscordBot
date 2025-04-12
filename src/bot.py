@@ -223,6 +223,10 @@ class QuingCraftBot(commands.Bot):
         for guild in self.guilds:
             print(f" - {guild.name} (ID: {guild.id})")
         
+        # Loading pending requests from the database
+        print("Loading pending requests from database...")
+        await self.load_pending_requests()
+        
         await self.create_whitelist_message()
         
         # Nachricht über Command-Verfügbarkeit
@@ -234,197 +238,188 @@ class QuingCraftBot(commands.Bot):
         for listener in self._listeners:
             print(f" - {listener}")
     
-    # Direkte Event-Listener für Reaktionen
-    
-    @commands.Cog.listener()
-    async def on_reaction_add(self, reaction, user):
-        """Handle direct reaction add event."""
-        # Ignoriere Bot-eigene Reaktionen
-        if user.id == self.user.id:
-            return
-        
-        print(f"DEBUG DIRECT: Reaction added: {reaction.emoji} by user {user.name} ({user.id}) on message {reaction.message.id}")
-        
-        # Prüfe, ob es ein Whitelist-Request ist
-        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
-        if reaction.message.channel.id == mod_channel_id:
-            print(f"DEBUG DIRECT: Reaction is in mod channel")
-            
-            for req_user_id, req_message_id in self.pending_requests.items():
-                if req_message_id == reaction.message.id:
-                    print(f"DEBUG DIRECT: Found matching request from user {req_user_id}")
-                    
-                    # Führe die gleichen Aktionen aus wie in _process_whitelist_reaction
-                    if str(reaction.emoji) == "✅":
-                        print(f"DEBUG DIRECT: Processing approval via direct listener")
-                        await self._approve_whitelist_request(req_user_id, reaction.message.channel.id)
-                    elif str(reaction.emoji) == "❌":
-                        print(f"DEBUG DIRECT: Processing rejection via direct listener")
-                        await self._reject_whitelist_request(req_user_id)
-    
-    # Füge eine spezielle Methode hinzu, um Reaktionen manuell abzurufen und zu verarbeiten
-    async def check_reactions(self, message_id: int) -> None:
-        """Manually check reactions on a message."""
+    async def load_pending_requests(self) -> None:
+        """Load pending requests from the database."""
         try:
+            # Hole alle ausstehenden Anfragen aus der Datenbank und versuche, die Nachrichten zu finden
+            pending_requests = self.db.get_all_pending_requests()
+            if not pending_requests:
+                print("No pending requests found in database")
+                return
+            
             mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
-            channel = self.get_channel(mod_channel_id)
-            if not channel:
-                print(f"ERROR: Could not get mod channel {mod_channel_id}")
+            mod_channel = self.get_channel(mod_channel_id)
+            if not mod_channel:
+                print(f"Could not find mod channel with ID {mod_channel_id}")
                 return
             
-            message = await channel.fetch_message(message_id)
-            if not message:
-                print(f"ERROR: Could not fetch message {message_id}")
-                return
+            print(f"Found {len(pending_requests)} pending requests in database")
             
-            print(f"DEBUG: Checking reactions on message {message_id}")
-            print(f"DEBUG: Message has {len(message.reactions)} reactions")
-            
-            for reaction in message.reactions:
-                print(f"DEBUG: Found reaction {reaction.emoji} with count {reaction.count}")
-                
-                # Finde den Benutzer, der hinter dieser Nachricht steht
-                user_id = None
-                for req_user_id, req_message_id in self.pending_requests.items():
-                    if req_message_id == message_id:
-                        user_id = req_user_id
-                        break
-                
-                if not user_id:
-                    print(f"DEBUG: Could not find user for message {message_id}")
+            # Durchsuche die letzten 100 Nachrichten im Mod-Kanal
+            async for message in mod_channel.history(limit=100):
+                if not message.embeds:
                     continue
                 
-                print(f"DEBUG: Request is from user {user_id}")
+                # Prüfe, ob die Nachricht eine Whitelist-Anfrage ist
+                embed = message.embeds[0]
+                if embed.title != MOD_REQUEST_TITLE:
+                    continue
                 
-                # Verarbeite Reaktionen
-                if str(reaction.emoji) == "✅":
-                    print(f"DEBUG: Processing approval via manual check")
-                    await self._approve_whitelist_request(user_id, channel.id)
-                elif str(reaction.emoji) == "❌":
-                    print(f"DEBUG: Processing rejection via manual check")
-                    await self._reject_whitelist_request(user_id)
+                # Extrahiere die Benutzer-ID aus dem Embed
+                import re
+                match = re.search(r"<@(\d+)>", embed.description)
+                if not match:
+                    continue
+                
+                user_id = int(match.group(1))
+                
+                # Prüfe, ob dieser Benutzer eine ausstehende Anfrage hat
+                for req in pending_requests:
+                    if req[1] == user_id:  # req[1] sollte die discord_id sein
+                        print(f"Found message {message.id} for pending request from user {user_id}")
+                        self.pending_requests[user_id] = message.id
+                        break
+            
+            print(f"Loaded {len(self.pending_requests)} pending requests into memory")
         except Exception as e:
-            print(f"ERROR in check_reactions: {str(e)}")
+            print(f"Error loading pending requests: {e}")
             traceback.print_exc()
     
-    # Spezielle Hilfsmethode für manuelles Debugging über eine Slash-Command
+    # Nur ein Event-Listener für on_message behalten
     @commands.Cog.listener()
     async def on_message(self, message):
-        """Listen for special debug commands."""
+        """Process messages and commands."""
         if message.author.bot:
             return
         
-        # Einfacher Debug-Befehl
-        if message.content.startswith("!debug-reactions"):
-            print("DEBUG: Debug command received")
-            
-            # Extrahiere die Nachrichten-ID, falls angegeben
-            parts = message.content.split()
-            if len(parts) > 1:
-                try:
-                    message_id = int(parts[1])
-                    await message.channel.send(f"Checking reactions on message {message_id}...")
-                    await self.check_reactions(message_id)
-                except ValueError:
-                    await message.channel.send("Invalid message ID. Please provide a valid number.")
-            else:
-                await message.channel.send("Please provide a message ID to check.")
+        # Debug-Befehle
+        if message.content.startswith("!debug"):
+            if message.content == "!debug-requests":
+                await self._debug_requests(message)
+            elif message.content.startswith("!debug-reactions"):
+                await self._debug_reactions(message)
+            elif message.content.startswith("!debug-add"):
+                parts = message.content.split()
+                if len(parts) > 1:
+                    username = parts[1]
+                    await message.channel.send(f"Force adding {username} to whitelist...")
+                    result = await self.rcon.whitelist_add(username)
+                    await message.channel.send(f"Result: {'Success' if result else 'Failed'}")
+                else:
+                    await message.channel.send("Please provide a username")
+            elif message.content.startswith("!debug-memory"):
+                # Zeige wichtige Variablen und ihren Inhalt
+                memory_info = "**Memory Debug:**\n"
+                memory_info += f"- pending_requests: {self.pending_requests}\n"
+                memory_info += f"- whitelist_message_id: {self.whitelist_message_id}\n"
+                memory_info += f"- staff_roles: {self.staff_roles}\n"
+                await message.channel.send(memory_info)
         
-        # Befehl zum Auflisten aller ausstehenden Anfragen
-        elif message.content == "!debug-requests":
-            requests_info = "Current pending requests:\n"
-            for user_id, msg_id in self.pending_requests.items():
-                requests_info += f"- User {user_id}: Message {msg_id}\n"
-            
-            await message.channel.send(requests_info if self.pending_requests else "No pending requests.")
-        
-        # Normales Command-Processing fortsetzen
+        # Normal message processing
         await self.process_commands(message)
     
+    async def _debug_requests(self, message):
+        """Handle debug-requests command."""
+        if not self.pending_requests:
+            await message.channel.send("No pending requests in memory.")
+            return
+        
+        requests_info = "**Current pending requests:**\n"
+        for user_id, msg_id in self.pending_requests.items():
+            # Versuche, weitere Informationen über die Anfrage zu bekommen
+            request = self.db.get_pending_request(user_id)
+            minecraft_name = request[2] if request else "Unknown"
+            requests_info += f"• User {user_id} ({minecraft_name}): Message {msg_id}\n"
+        
+        await message.channel.send(requests_info)
+    
+    async def _debug_reactions(self, message):
+        """Handle debug-reactions command."""
+        parts = message.content.split()
+        if len(parts) <= 1:
+            await message.channel.send("Please provide a message ID to check")
+            return
+        
+        try:
+            message_id = int(parts[1])
+            await message.channel.send(f"Checking reactions on message {message_id}...")
+            await self.check_reactions(message_id)
+        except ValueError:
+            await message.channel.send("Invalid message ID. Please provide a valid number.")
+    
+    # Eventlistener für Reaktionen verbessern
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
-        """Handle reactions on whitelist requests."""
+        """Handle reactions on whitelist requests using raw events."""
         # Ignoriere Bot-eigene Reaktionen
         if payload.user_id == self.user.id:
-            print(f"DEBUG: Ignoring bot's own reaction")
+            print(f"[REACTION] Ignoring bot's own reaction")
             return
         
         # Ignoriere Reaktionen außerhalb des Mod-Channels
         mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
         if payload.channel_id != mod_channel_id:
-            print(f"DEBUG: Reaction in wrong channel. Got {payload.channel_id}, expected {mod_channel_id}")
             return
         
-        print(f"DEBUG: Reaction detected: {payload.emoji} on message {payload.message_id}")
+        emoji = str(payload.emoji)
+        message_id = payload.message_id
         
-        # Verarbeite die Reaktion in einem separaten Task, um Blockierungen zu vermeiden
-        asyncio.create_task(self._process_whitelist_reaction(payload))
-    
-    async def _process_whitelist_reaction(self, payload: discord.RawReactionActionEvent) -> None:
-        """Process a whitelist reaction in a separate task."""
-        try:
-            message_id = payload.message_id
-            user_id = None
-            emoji = str(payload.emoji)
+        print(f"[REACTION] Detected: {emoji} on message {message_id} by user {payload.user_id}")
+        
+        # Besonders wichtig: Prüfe, ob dieses message_id in pending_requests als Wert existiert
+        found_user_id = None
+        for user_id, req_message_id in self.pending_requests.items():
+            if req_message_id == message_id:
+                found_user_id = user_id
+                print(f"[REACTION] Found matching request from user {found_user_id}")
+                break
+        
+        if found_user_id is None:
+            print(f"[REACTION] No matching request found for message {message_id}")
             
-            print(f"DEBUG: Processing reaction {emoji} on message {message_id}")
-            print(f"DEBUG: Current pending requests: {self.pending_requests}")
-            
-            # Versuche, die zugehörige Anfrage zu finden
-            for req_user_id, req_message_id in self.pending_requests.items():
-                if req_message_id == message_id:
-                    user_id = req_user_id
-                    print(f"DEBUG: Found matching request from user {user_id}")
-                    break
-            
-            # Wenn keine Anfrage gefunden wurde, versuche, sie aus der Nachricht zu extrahieren
-            if not user_id:
-                print(f"DEBUG: No matching request found in tracked requests")
-                
-                try:
-                    channel = self.get_channel(payload.channel_id)
-                    if not channel:
-                        print(f"DEBUG: Could not get channel {payload.channel_id}")
-                        return
-                    
-                    message = await channel.fetch_message(message_id)
-                    if not message or not message.embeds:
-                        print(f"DEBUG: Message has no embeds")
-                        return
-                    
-                    embed = message.embeds[0]
-                    desc = embed.description
-                    print(f"DEBUG: Message embed description: {desc}")
-                    
-                    # Extrahiere Discord-ID aus dem Embed
-                    import re
-                    match = re.search(r"<@(\d+)>", desc)
-                    if match:
-                        user_id = int(match.group(1))
-                        print(f"DEBUG: Extracted user ID: {user_id}")
-                        
-                        # Füge zur Nachverfolgung hinzu
-                        self.pending_requests[user_id] = message_id
-                    else:
-                        print(f"DEBUG: Could not extract user ID from embed")
-                        return
-                except Exception as e:
-                    print(f"DEBUG: Error getting message: {str(e)}")
-                    traceback.print_exc()
+            # Versuche trotzdem, die Nachricht zu finden und die User-ID zu extrahieren
+            try:
+                channel = self.get_channel(payload.channel_id)
+                if not channel:
+                    print(f"[REACTION] Could not get channel {payload.channel_id}")
                     return
-            
-            # Verarbeite die Reaktion
-            if emoji == "✅":
-                print(f"DEBUG: Processing approval for user {user_id}")
-                await self._approve_whitelist_request(user_id, payload.channel_id)
-            elif emoji == "❌":
-                print(f"DEBUG: Processing rejection for user {user_id}")
-                await self._reject_whitelist_request(user_id)
-            else:
-                print(f"DEBUG: Unknown reaction: {emoji}")
-        except Exception as e:
-            print(f"DEBUG: Error in _process_whitelist_reaction: {str(e)}")
-            traceback.print_exc()
+                
+                message = await channel.fetch_message(message_id)
+                if not message or not message.embeds:
+                    print(f"[REACTION] Message has no embeds")
+                    return
+                
+                embed = message.embeds[0]
+                # Überprüfe, ob es sich um eine Whitelist-Anfrage handelt
+                if embed.title != MOD_REQUEST_TITLE:
+                    print(f"[REACTION] Message is not a whitelist request")
+                    return
+                
+                desc = embed.description
+                
+                import re
+                match = re.search(r"<@(\d+)>", desc)
+                if match:
+                    found_user_id = int(match.group(1))
+                    print(f"[REACTION] Extracted user ID from embed: {found_user_id}")
+                    
+                    # Speichere für die Zukunft
+                    self.pending_requests[found_user_id] = message_id
+                else:
+                    print(f"[REACTION] Could not extract user ID from embed")
+                    return
+            except Exception as e:
+                print(f"[REACTION] Error extracting user ID: {e}")
+                traceback.print_exc()
+                return
+        
+        # Verarbeite die Reaktion basierend auf dem Emoji
+        if emoji == "✅":
+            print(f"[REACTION] Processing approval for user {found_user_id}")
+            await self._approve_whitelist_request(found_user_id, payload.channel_id)
+        elif emoji == "❌":
+            print(f"[REACTION] Processing rejection for user {found_user_id}")
+            await self._reject_whitelist_request(found_user_id)
     
     async def _approve_whitelist_request(self, user_id: int, channel_id: int) -> None:
         """Approve a whitelist request."""
@@ -508,6 +503,49 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"DEBUG: Error in _reject_whitelist_request: {str(e)}")
             traceback.print_exc()
+
+    # Direkte Debug-Commands
+    
+    @commands.command(name="debug_requests")
+    async def debug_requests_command(self, ctx):
+        """List all pending whitelist requests."""
+        requests_info = "Current pending requests:\n"
+        for user_id, msg_id in self.pending_requests.items():
+            requests_info += f"• User {user_id}: Message {msg_id}\n"
+        
+        await ctx.send(requests_info if self.pending_requests else "No pending requests.")
+    
+    @commands.command(name="debug_reactions")
+    async def debug_reactions_command(self, ctx, message_id: int = None):
+        """Check reactions on a message."""
+        if not message_id:
+            await ctx.send("Please provide a message ID to check.")
+            return
+        
+        await ctx.send(f"Checking reactions on message {message_id}...")
+        await self.check_reactions(message_id)
+    
+    @commands.command(name="whitelist_force_add")
+    async def whitelist_force_add_command(self, ctx, username: str = None):
+        """Force add a user to the whitelist."""
+        if not username:
+            await ctx.send("Please provide a Minecraft username.")
+            return
+        
+        await ctx.send(f"Attempting to add {username} to whitelist...")
+        result = await self.rcon.whitelist_add(username)
+        await ctx.send(f"Result: {'Success' if result else 'Failed'}")
+    
+    @commands.command(name="whitelist_check")
+    async def whitelist_check_command(self, ctx, username: str = None):
+        """Check if a user is on the whitelist."""
+        if not username:
+            await ctx.send("Please provide a Minecraft username.")
+            return
+        
+        await ctx.send(f"Checking if {username} is on the whitelist...")
+        result = await self.rcon.whitelist_check(username)
+        await ctx.send(f"Result: {username} is {'on' if result else 'not on'} the whitelist.")
 
 def main() -> None:
     """Start the bot."""

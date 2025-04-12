@@ -1,7 +1,7 @@
 """
 Database configuration and models for the QuingCraft bot.
 """
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
 import os
 import psycopg2
 from psycopg2.extras import DictCursor
@@ -238,6 +238,20 @@ class Database:
             print(f"Database error in reject_request: {e}")
             self.conn.rollback()
             return False, None
+    
+    def get_all_pending_requests(self) -> List[tuple]:
+        """Get all pending whitelist requests."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM whitelist_requests
+                    WHERE status = 'pending'
+                """)
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Database error in get_all_pending_requests: {e}")
+            self.conn.rollback()
+            return []
     
     def close(self) -> None:
         """Close the database connection."""
