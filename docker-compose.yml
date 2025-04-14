@@ -138,6 +138,7 @@ services:
       MYSQL_DATABASE: minecraft
       MYSQL_USER: minecraft
       MYSQL_PASSWORD: ${MINECRAFT_MYSQL_PASSWORD}
+      MYSQL_ROOT_HOST: "%"  # Erlaubt Root-Verbindungen von überall
     command: >
       --default-authentication-plugin=mysql_native_password
       --character-set-server=utf8mb4
@@ -149,7 +150,6 @@ services:
       - type: volume
         source: minecraft-mysql-data
         target: /var/lib/mysql
-      - ./mysql-init:/docker-entrypoint-initdb.d
     restart: unless-stopped
     networks:
       - luckperms-network
