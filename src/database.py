@@ -19,7 +19,7 @@ class Database:
             port=os.getenv("DB_PORT"),
             dbname=os.getenv("DB_NAME"),
             user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD")
+            password=os.getenv("QUINGCRAFT_DB_PASSWORD")
         )
         self._create_tables()
         self._update_schema()
