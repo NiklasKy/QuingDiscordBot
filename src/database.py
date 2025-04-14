@@ -22,7 +22,7 @@ class Database:
         password = os.getenv("QUINGCRAFT_DB_PASSWORD", "").strip('"')
         
         # Erstelle die Verbindungs-URL
-        conn_string = f"host={host} port={port} dbname={dbname} user={user} password={password}"
+        conn_string = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
         
         # Verbinde zur Datenbank
         self.conn = psycopg2.connect(conn_string)
