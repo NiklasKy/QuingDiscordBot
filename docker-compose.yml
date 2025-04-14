@@ -130,6 +130,31 @@ services:
       timeout: 5s
       retries: 3
 
+  minecraft-mysql:
+    image: "mysql:8.0"
+    container_name: "minecraft-mysql"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MINECRAFT_MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: minecraft
+      MYSQL_USER: minecraft
+      MYSQL_PASSWORD: ${MINECRAFT_MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - type: volume
+        source: minecraft-mysql-data
+        target: /var/lib/mysql
+    restart: unless-stopped
+    networks:
+      - luckperms-network
+    stop_grace_period: 30s
+    stop_signal: SIGTERM
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MINECRAFT_MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
 volumes:
   luckperms-data:
     name: "luckperms-postgres-data"
@@ -139,6 +164,8 @@ volumes:
     name: "quingcraft-postgres-data"
   redis-data:
     name: "minecraft-redis-data"
+  minecraft-mysql-data:
+    name: "minecraft-mysql-data"
 
 networks:
   luckperms-network:

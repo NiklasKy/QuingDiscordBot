@@ -8,6 +8,20 @@ param(
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
+# Lade .env Datei
+$envPath = Join-Path $PSScriptRoot ".env"
+if (Test-Path $envPath) {
+    Get-Content $envPath | ForEach-Object {
+        if ($_ -match '^([^=]+)=(.*)$') {
+            $name = $matches[1]
+            $value = $matches[2]
+            [Environment]::SetEnvironmentVariable($name, $value, "Process")
+        }
+    }
+} else {
+    Write-Host "Warnung: .env Datei nicht gefunden!" -ForegroundColor Yellow
+}
+
 # Konfiguration
 $backupPath = "C:\Backups\Docker"
 $shutdownBackupPath = Join-Path $backupPath "Shutdown"
@@ -82,6 +96,24 @@ function Backup-BotConfig {
         Write-Host "Backup erfolgreich: $backupFile" -ForegroundColor Green
     } else {
         Write-Host "Fehler beim Backup der Bot-Konfiguration" -ForegroundColor Red
+    }
+}
+
+# Funktion für MySQL Backup
+function Backup-MySQL {
+    param (
+        [string]$BackupType = "regular"
+    )
+    
+    $targetPath = if ($BackupType -eq "shutdown") { $shutdownBackupPath } else { $backupPath }
+    Write-Host "Backup von MySQL..." -ForegroundColor Yellow
+    $backupFile = Join-Path $targetPath "minecraft-mysql-$date.sql"
+    
+    docker exec minecraft-mysql mysqldump -u root -p${env:MINECRAFT_MYSQL_ROOT_PASSWORD} --all-databases > $backupFile
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Backup erfolgreich: $backupFile" -ForegroundColor Green
+    } else {
+        Write-Host "Fehler beim MySQL Backup" -ForegroundColor Red
     }
 }
 
@@ -170,6 +202,29 @@ function Restore-BotConfig {
     }
 }
 
+# Funktion zum Wiederherstellen von MySQL
+function Restore-MySQL {
+    $latestBackup = Get-ChildItem -Path $shutdownBackupPath -Filter "minecraft-mysql-*.sql" | 
+                    Sort-Object LastWriteTime -Descending | 
+                    Select-Object -First 1
+    
+    if ($latestBackup) {
+        Write-Host "Wiederherstelle MySQL aus $($latestBackup.Name)..." -ForegroundColor Yellow
+        docker-compose up -d minecraft-mysql
+        Start-Sleep -Seconds 10
+        Get-Content $latestBackup.FullName | docker exec -i minecraft-mysql mysql -u root -p${env:MINECRAFT_MYSQL_ROOT_PASSWORD}
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "MySQL Wiederherstellung erfolgreich!" -ForegroundColor Green
+        } else {
+            Write-Host "Fehler bei der MySQL Wiederherstellung!" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "Kein MySQL Backup gefunden. Starte mit leerer Datenbank." -ForegroundColor Yellow
+        docker-compose up -d minecraft-mysql
+    }
+}
+
 # Funktion zum Erstellen von geplanten Aufgaben
 function Create-ScheduledTask {
     param (
@@ -226,6 +281,7 @@ function Invoke-Backup {
     Backup-Postgres -ContainerName "quingcraft-postgres" -DbName "quingcraft" -User "quingcraft" -Password $env:QUINGCRAFT_DB_PASSWORD -BackupType $BackupType
     Backup-Redis -BackupType $BackupType
     Backup-BotConfig -BackupType $BackupType
+    Backup-MySQL -BackupType $BackupType
 }
 
 # Funktion zum Starten mit Backup-Wiederherstellung
@@ -236,6 +292,7 @@ function Start-WithBackup {
     Restore-Postgres -ContainerName "quingcraft-postgres" -DbName "quingcraft" -User "quingcraft" -Password $env:QUINGCRAFT_DB_PASSWORD
     Restore-Redis
     Restore-BotConfig
+    Restore-MySQL
 }
 
 # Funktion zum Erstellen aller geplanten Aufgaben
