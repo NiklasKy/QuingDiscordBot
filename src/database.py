@@ -14,13 +14,18 @@ class Database:
     
     def __init__(self) -> None:
         """Initialize database connection."""
-        self.conn = psycopg2.connect(
-            host=os.getenv("DB_HOST"),
-            port=os.getenv("DB_PORT"),
-            dbname=os.getenv("DB_NAME"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("QUINGCRAFT_DB_PASSWORD")
-        )
+        # Hole die Umgebungsvariablen
+        host = os.getenv("DB_HOST")
+        port = os.getenv("DB_PORT")
+        dbname = os.getenv("DB_NAME")
+        user = os.getenv("DB_USER")
+        password = os.getenv("QUINGCRAFT_DB_PASSWORD", "").strip('"')
+        
+        # Erstelle die Verbindungs-URL
+        conn_string = f"host={host} port={port} dbname={dbname} user={user} password={password}"
+        
+        # Verbinde zur Datenbank
+        self.conn = psycopg2.connect(conn_string)
         self._create_tables()
         self._update_schema()
     
