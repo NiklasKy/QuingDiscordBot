@@ -48,6 +48,106 @@ from .texts import (
 
 load_dotenv()
 
+class RoleModal(discord.ui.Modal, title="Role Request"):
+    """Modal for updating Minecraft roles."""
+    
+    minecraft_username = discord.ui.TextInput(
+        label="Minecraft Username",
+        placeholder="Enter your Minecraft username...",
+        required=True,
+        min_length=3,
+        max_length=16
+    )
+    
+    twitch_username = discord.ui.TextInput(
+        label="Twitch Username",
+        placeholder="Enter your Twitch username (optional)",
+        required=False,
+        min_length=2,
+        max_length=25
+    )
+    
+    def __init__(self, bot: commands.Bot) -> None:
+        super().__init__()
+        self.bot = bot
+    
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """Process the submitted role request."""
+        try:
+            minecraft_username = self.minecraft_username.value.strip()
+            twitch_username = self.twitch_username.value.strip() if self.twitch_username.value else None
+            
+            user = interaction.user
+            print(f"Role update request from {user.name} ({user.id}) for username: {minecraft_username}")
+            
+            # Verify Minecraft username
+            if not await self.bot.verify_minecraft_username(minecraft_username):
+                await interaction.response.send_message(
+                    "Invalid Minecraft username. Please provide a valid username.",
+                    ephemeral=True
+                )
+                return
+            
+            # Acknowledge receipt first
+            await interaction.response.send_message(
+                "Your role update request has been received. Processing...",
+                ephemeral=True
+            )
+            
+            # Process role update based on user's Discord roles
+            roles_updated = await self.bot.update_minecraft_roles(user, minecraft_username, twitch_username)
+            
+            # Notify the user of the result
+            if roles_updated:
+                # Send a followup message to confirm success
+                try:
+                    await interaction.followup.send(
+                        f"Your in-game roles have been updated successfully!",
+                        ephemeral=True
+                    )
+                except:
+                    await user.send(f"Your in-game roles have been updated successfully!")
+            else:
+                # Send a followup message about failure
+                try:
+                    await interaction.followup.send(
+                        "Failed to update your in-game roles. Please contact a staff member for assistance.",
+                        ephemeral=True
+                    )
+                except:
+                    await user.send("Failed to update your in-game roles. Please contact a staff member for assistance.")
+                    
+        except Exception as e:
+            print(f"Error processing role request: {str(e)}")
+            traceback.print_exc()
+            # Try to send an error message to the user
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        ERROR_PROCESSING,
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        ERROR_PROCESSING,
+                        ephemeral=True
+                    )
+            except:
+                pass
+
+class RoleView(discord.ui.View):
+    """View containing the role update button."""
+    
+    def __init__(self, bot: commands.Bot) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+    
+    @discord.ui.button(label="Update Game Roles", style=discord.ButtonStyle.secondary, emoji="🔄")
+    async def update_roles(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Handle button click."""
+        modal = RoleModal(self.bot)
+        await interaction.response.send_modal(modal)
+
 class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
     """Modal for entering Minecraft username."""
     
@@ -193,8 +293,9 @@ class AdminCommands(commands.Cog):
         # Create the command group structure
         self.qc_group = app_commands.Group(name="qc", description="QuingCraft management commands (staff only)")
         self.whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=self.qc_group)
+        self.roles_group = app_commands.Group(name="roles", description="Role management commands", parent=self.qc_group)
         
-        # Register the commands
+        # Register the whitelist commands
         self.whitelist_group.add_command(app_commands.Command(
             name="add",
             description="Add a player to the whitelist",
@@ -213,6 +314,29 @@ class AdminCommands(commands.Cog):
             name="show",
             description="Show all players on the whitelist",
             callback=self.whitelist_show,
+            extras={"requires_staff": True}
+        ))
+        
+        # Register the role commands
+        self.roles_group.add_command(app_commands.Command(
+            name="update",
+            description="Update a player's roles based on their Discord roles",
+            callback=self.roles_update,
+            extras={"requires_staff": True}
+        ))
+        
+        self.roles_group.add_command(app_commands.Command(
+            name="check",
+            description="Check a user's current Discord roles and mapped Minecraft roles",
+            callback=self.roles_check,
+            extras={"requires_staff": True}
+        ))
+        
+        # Add direct role command to qc group
+        self.qc_group.add_command(app_commands.Command(
+            name="role",
+            description="Set a specific role for a Minecraft player",
+            callback=self.role_set,
             extras={"requires_staff": True}
         ))
         
@@ -281,6 +405,115 @@ class AdminCommands(commands.Cog):
             print(f"Error in whitelist_show: {str(e)}")
             await interaction.followup.send(f"An error occurred while retrieving the whitelist: {str(e)}")
 
+    async def roles_update(self, interaction: discord.Interaction, minecraft_username: str, discord_user: discord.Member = None):
+        """Update a player's roles based on their Discord roles."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Use the mentioned user or the command issuer if not specified
+        target_user = discord_user or interaction.user
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Run the role update
+        success = await self.bot.update_minecraft_roles(target_user, minecraft_username)
+        
+        # Report the result
+        if success:
+            await interaction.followup.send(f"Successfully updated roles for Minecraft player **{minecraft_username}** based on {target_user.mention}'s Discord roles.")
+        else:
+            await interaction.followup.send(f"Failed to update roles for Minecraft player **{minecraft_username}**. Check the logs for details.")
+    
+    async def roles_check(self, interaction: discord.Interaction, discord_user: discord.Member = None):
+        """Check a user's current Discord roles and mapped Minecraft roles."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Use the mentioned user or the command issuer if not specified
+        target_user = discord_user or interaction.user
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Get user's Discord roles
+        user_roles = target_user.roles
+        
+        # Create an embed to display role information
+        embed = discord.Embed(
+            title=f"Role Information for {target_user.display_name}",
+            description=f"Discord ID: {target_user.id}",
+            color=discord.Color.blue()
+        )
+        
+        # List Discord roles
+        discord_roles_str = "\n".join([f"• {role.name} (ID: {role.id})" for role in user_roles if role.name != "@everyone"])
+        if discord_roles_str:
+            embed.add_field(
+                name="Discord Roles",
+                value=discord_roles_str,
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Discord Roles",
+                value="No roles assigned",
+                inline=False
+            )
+        
+        # List mapped Minecraft roles
+        minecraft_roles = []
+        for role in user_roles:
+            if role.id in self.bot.role_mappings:
+                minecraft_role = self.bot.role_mappings[role.id]
+                minecraft_cmd = f"lpv user [Minecraft Username] Parent Set {minecraft_role}"
+                minecraft_roles.append(f"• {role.name} -> {minecraft_role} (`{minecraft_cmd}`)")
+        
+        if minecraft_roles:
+            embed.add_field(
+                name="Mapped Minecraft Roles",
+                value="\n".join(minecraft_roles),
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Mapped Minecraft Roles",
+                value="No Minecraft role mappings found for this user's Discord roles",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed)
+
+    async def role_set(self, interaction: discord.Interaction, minecraft_username: str, role_name: str):
+        """Directly set a specific role for a Minecraft player."""
+        # Check if user has staff role
+        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Format and execute the lpv command
+        minecraft_command = f"lpv user {minecraft_username} Parent Set {role_name}"
+        
+        try:
+            # Execute the command
+            response = await self.bot.rcon.execute_command(minecraft_command)
+            
+            # Check if the command was successful
+            if "error" not in response.lower() and "unknown command" not in response.lower():
+                await interaction.followup.send(f"✅ Successfully set role **{role_name}** for player **{minecraft_username}**.")
+            else:
+                await interaction.followup.send(f"❌ Failed to set role. Server response: ```{response}```")
+        except Exception as e:
+            print(f"Error setting role: {str(e)}")
+            await interaction.followup.send(f"❌ An error occurred while setting the role: {str(e)}")
+
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
     
@@ -348,6 +581,7 @@ class QuingCraftBot(commands.Bot):
         self.rcon = RconHandler()
         self.pending_requests = {}
         self.whitelist_message_id = None
+        self.role_message_id = None
         
         # Staff role IDs
         self.staff_roles = [
@@ -355,8 +589,183 @@ class QuingCraftBot(commands.Bot):
             int(os.getenv("MOD_ROLE_ID", "0"))
         ]
         
+        # Role mappings from .env (Discord Role ID -> Minecraft Role)
+        self.role_mappings = self._load_role_mappings()
+        
+        # Role hierarchy (higher index = higher rank)
+        self.role_hierarchy = self._load_role_hierarchy()
+        
         # Debug message for initialization
         print("DEBUG: Bot initialized with all intents")
+    
+    def _load_role_mappings(self) -> Dict[int, str]:
+        """Load role mappings from environment variables."""
+        role_mappings = {}
+        
+        # Example format in .env:
+        # ROLE_MAPPING_ADMIN=12345:admin
+        # ROLE_MAPPING_VIP=67890,98765:vip
+        # ROLE_MAPPING_MOD=13579:mod
+        #
+        # The command format "lpv user {username} Parent Set {rolename}" will be used
+        
+        # Look for all environment variables starting with ROLE_MAPPING_
+        for key, value in os.environ.items():
+            if key.startswith("ROLE_MAPPING_"):
+                try:
+                    parts = value.split(":", 1)
+                    if len(parts) != 2:
+                        print(f"Invalid role mapping format for {key}: {value}")
+                        continue
+                    
+                    discord_role_ids_str, minecraft_role = parts
+                    
+                    # Multiple Discord role IDs can be comma-separated
+                    discord_role_ids = [int(role_id.strip()) for role_id in discord_role_ids_str.split(",")]
+                    
+                    for role_id in discord_role_ids:
+                        role_mappings[role_id] = minecraft_role.strip()
+                    
+                    print(f"Loaded role mapping: {key} -> {discord_role_ids} -> {minecraft_role}")
+                except Exception as e:
+                    print(f"Error parsing role mapping {key}: {str(e)}")
+        
+        return role_mappings
+    
+    def _load_role_hierarchy(self) -> Dict[str, int]:
+        """Load role hierarchy - higher number means higher rank."""
+        hierarchy = {}
+        
+        # Default order based on typical naming conventions
+        default_ranks = ["default", "member", "sub", "vip", "vip+", "mvp", "mvp+", "mod", "admin", "owner"]
+        
+        # Try to get hierarchy from environment variable
+        role_hierarchy_str = os.getenv("ROLE_HIERARCHY", "")
+        if role_hierarchy_str:
+            try:
+                # Format example: sub:1,vip:2,mod:3,admin:4
+                for i, pair in enumerate(role_hierarchy_str.split(",")):
+                    if not pair.strip():
+                        continue
+                    
+                    role_name, rank_str = pair.split(":", 1)
+                    rank = int(rank_str.strip())
+                    hierarchy[role_name.strip().lower()] = rank
+                    print(f"Added role to hierarchy: {role_name.strip().lower()} -> {rank}")
+            except Exception as e:
+                print(f"Error parsing role hierarchy: {str(e)}")
+                print("Using default hierarchy")
+                
+                # If parsing fails, use default based on found roles
+                known_roles = set()
+                for discord_id, role_name in self.role_mappings.items():
+                    known_roles.add(role_name.lower())
+                
+                # Create a hierarchy based on found roles and default ordering
+                for i, rank in enumerate(default_ranks):
+                    if rank in known_roles:
+                        hierarchy[rank] = i
+        else:
+            print("No ROLE_HIERARCHY defined, using default order")
+            # Default hierarchy based on found roles
+            known_roles = set()
+            for discord_id, role_name in self.role_mappings.items():
+                known_roles.add(role_name.lower())
+            
+            # Create a hierarchy based on found roles and default ordering
+            for i, rank in enumerate(default_ranks):
+                if rank in known_roles:
+                    hierarchy[rank] = i
+        
+        print(f"Role hierarchy: {hierarchy}")
+        return hierarchy
+    
+    async def update_minecraft_roles(self, user: discord.User, minecraft_username: str, twitch_username: str = None) -> bool:
+        """
+        Update Minecraft roles based on Discord roles.
+        
+        Args:
+            user: Discord user
+            minecraft_username: Minecraft username
+            twitch_username: Optional Twitch username
+            
+        Returns:
+            bool: True if at least one role was updated successfully
+        """
+        print(f"Updating roles for {user.name} ({user.id}) with Minecraft username: {minecraft_username}")
+        
+        # Check if user is in our guild
+        guild_id = os.getenv("DISCORD_GUILD_ID")
+        if not guild_id:
+            print("No DISCORD_GUILD_ID set, cannot update roles")
+            return False
+        
+        guild = self.get_guild(int(guild_id))
+        if not guild:
+            print(f"Could not find guild with ID {guild_id}")
+            return False
+        
+        # Get the member from the guild
+        member = guild.get_member(user.id)
+        if not member:
+            print(f"User {user.id} is not a member of the guild")
+            return False
+        
+        # Check which roles the user has
+        user_role_ids = [role.id for role in member.roles]
+        
+        # Track success of commands
+        success_count = 0
+        
+        # Process Twitch integration if provided
+        if twitch_username:
+            print(f"Setting Twitch username {twitch_username} for {minecraft_username}")
+            # Example command that could be used to link Twitch
+            twitch_cmd = f"twitch link {minecraft_username} {twitch_username}"
+            
+            try:
+                response = await self.rcon.execute_command(twitch_cmd)
+                print(f"Twitch linking response: {response}")
+                if "successfully" in response.lower() or "linked" in response.lower():
+                    success_count += 1
+            except Exception as e:
+                print(f"Error linking Twitch: {str(e)}")
+        
+        # Find all applicable roles and their ranks
+        applicable_roles = []
+        for role_id in user_role_ids:
+            if role_id in self.role_mappings:
+                minecraft_role = self.role_mappings[role_id]
+                role_rank = self.role_hierarchy.get(minecraft_role.lower(), 0)
+                applicable_roles.append((minecraft_role, role_rank))
+        
+        # Sort roles by rank (highest rank last)
+        applicable_roles.sort(key=lambda x: x[1])
+        
+        # Log all applicable roles
+        if applicable_roles:
+            roles_str = ", ".join([f"{role} (rank: {rank})" for role, rank in applicable_roles])
+            print(f"User has following applicable roles: {roles_str}")
+            
+            # Get the highest ranked role
+            highest_role, highest_rank = applicable_roles[-1]
+            print(f"Using highest ranked role: {highest_role} (rank: {highest_rank})")
+            
+            # Apply the highest ranked role
+            minecraft_command = f"lpv user {minecraft_username} Parent Set {highest_role}"
+            print(f"Executing command: {minecraft_command}")
+            
+            try:
+                response = await self.rcon.execute_command(minecraft_command)
+                print(f"Role command response: {response}")
+                if "error" not in response.lower() and "unknown command" not in response.lower():
+                    success_count += 1
+            except Exception as e:
+                print(f"Error executing role command: {str(e)}")
+        else:
+            print(f"User {user.id} has no applicable roles")
+        
+        return success_count > 0
     
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
@@ -474,6 +883,43 @@ class QuingCraftBot(commands.Bot):
         self.whitelist_message_id = message.id
         print(f"Created whitelist message with ID {message.id}")
     
+    async def create_role_message(self) -> None:
+        """Create or update the role update message in the channel."""
+        # Use the same channel as the whitelist message
+        channel_id = int(os.getenv("WHITELIST_CHANNEL_ID"))
+        channel = self.get_channel(channel_id)
+        
+        if not channel:
+            print(f"Could not find channel with ID {channel_id}")
+            return
+        
+        # Delete old message if it exists
+        if hasattr(self, 'role_message_id') and self.role_message_id:
+            try:
+                old_message = await channel.fetch_message(self.role_message_id)
+                await old_message.delete()
+            except discord.NotFound:
+                pass
+        
+        # Create new message
+        embed = discord.Embed(
+            title="Update Your Game Roles",
+            description="Click the button below to update your in-game roles based on your Discord roles.",
+            color=discord.Color.green()
+        )
+        
+        # Add info about available roles
+        embed.add_field(
+            name="Available Roles",
+            value="• Your Discord roles will be synchronized with the game\n• Make sure you're using the same Minecraft username\n• Optional: Link your Twitch account for additional benefits",
+            inline=False
+        )
+        
+        view = RoleView(self)
+        message = await channel.send(embed=embed, view=view)
+        self.role_message_id = message.id
+        print(f"Created role message with ID {message.id}")
+    
     async def verify_minecraft_username(self, username: str) -> bool:
         """Verify if a Minecraft username is valid using Mojang API."""
         async with aiohttp.ClientSession() as session:
@@ -493,6 +939,7 @@ class QuingCraftBot(commands.Bot):
         await self.load_pending_requests()
         
         await self.create_whitelist_message()
+        await self.create_role_message()
         
         # Message about command availability
         print("Commands should now be available in Discord!")
