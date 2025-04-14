@@ -52,6 +52,9 @@ function Backup-Postgres {
     Write-Host "Backup von $DbName..." -ForegroundColor Yellow
     $backupFile = Join-Path $targetPath "$DbName-$date.sql"
     
+    # Entferne Anführungszeichen aus dem Passwort für die Kommandozeile
+    $dbPassword = $Password -replace '"', ''
+    
     docker exec $ContainerName pg_dump -U $User -d $DbName > $backupFile
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Backup erfolgreich: $backupFile" -ForegroundColor Green
@@ -109,7 +112,10 @@ function Backup-MySQL {
     Write-Host "Backup von MySQL..." -ForegroundColor Yellow
     $backupFile = Join-Path $targetPath "minecraft-mysql-$date.sql"
     
-    docker exec minecraft-mysql mysqldump -u root -p${env:MINECRAFT_MYSQL_ROOT_PASSWORD} --all-databases > $backupFile
+    # Entferne Anführungszeichen aus dem Passwort für die Kommandozeile
+    $mysqlPassword = $env:MINECRAFT_MYSQL_ROOT_PASSWORD -replace '"', ''
+    
+    docker exec minecraft-mysql mysqldump -u root -p"$mysqlPassword" --all-databases > $backupFile
     if ($LASTEXITCODE -eq 0) {
         Write-Host "Backup erfolgreich: $backupFile" -ForegroundColor Green
     } else {
@@ -143,6 +149,10 @@ function Restore-Postgres {
         
         docker-compose up -d $serviceName
         Start-Sleep -Seconds 10
+        
+        # Entferne Anführungszeichen aus dem Passwort für die Kommandozeile
+        $dbPassword = $Password -replace '"', ''
+        
         Get-Content $latestBackup.FullName | docker exec -i $ContainerName psql -U $User -d $DbName
         
         if ($LASTEXITCODE -eq 0) {
@@ -212,7 +222,11 @@ function Restore-MySQL {
         Write-Host "Wiederherstelle MySQL aus $($latestBackup.Name)..." -ForegroundColor Yellow
         docker-compose up -d minecraft-mysql
         Start-Sleep -Seconds 10
-        Get-Content $latestBackup.FullName | docker exec -i minecraft-mysql mysql -u root -p${env:MINECRAFT_MYSQL_ROOT_PASSWORD}
+        
+        # Entferne Anführungszeichen aus dem Passwort für die Kommandozeile
+        $mysqlPassword = $env:MINECRAFT_MYSQL_ROOT_PASSWORD -replace '"', ''
+        
+        Get-Content $latestBackup.FullName | docker exec -i minecraft-mysql mysql -u root -p"$mysqlPassword"
         
         if ($LASTEXITCODE -eq 0) {
             Write-Host "MySQL Wiederherstellung erfolgreich!" -ForegroundColor Green
