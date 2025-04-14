@@ -16,7 +16,7 @@ class Database:
         """Initialize database connection."""
         # Debug: Zeige alle Umgebungsvariablen
         print("DEBUG: Environment variables:")
-        for key in ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "QUINGCRAFT_DB_PASSWORD"]:
+        for key in ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]:
             value = os.getenv(key)
             if value:
                 print(f"DEBUG: {key} is set")
@@ -29,7 +29,7 @@ class Database:
             port=os.getenv("DB_PORT"),
             dbname=os.getenv("DB_NAME"),
             user=os.getenv("DB_USER"),
-            password=os.getenv("QUINGCRAFT_DB_PASSWORD")
+            password=os.getenv("DB_PASSWORD")
         )
         self._create_tables()
         self._update_schema()
