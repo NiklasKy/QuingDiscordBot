@@ -21,8 +21,15 @@ class Database:
         user = os.getenv("DB_USER")
         password = os.getenv("QUINGCRAFT_DB_PASSWORD", "").strip('"')
         
+        # Debug-Ausgaben
+        print(f"DEBUG: Connecting to database with host={host}, port={port}, dbname={dbname}, user={user}")
+        print(f"DEBUG: Password length: {len(password)}")
+        
         # Erstelle die Verbindungs-URL
         conn_string = f"postgresql://{user}:{password}@{host}:{port}/{dbname}"
+        
+        # Debug-Ausgabe der Verbindungs-URL (ohne Passwort)
+        print(f"DEBUG: Connection string: postgresql://{user}:***@{host}:{port}/{dbname}")
         
         # Verbinde zur Datenbank
         self.conn = psycopg2.connect(conn_string)
