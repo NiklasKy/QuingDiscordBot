@@ -341,7 +341,8 @@ function Restore-SpecificBackup {
         [string]$DbName,
         [string]$User,
         [string]$Password,
-        [string]$BackupFile
+        [string]$BackupFile,
+        [switch]$DropDatabase = $false
     )
     
     if (-not (Test-Path $BackupFile)) {
@@ -369,6 +370,62 @@ function Restore-SpecificBackup {
         Start-Sleep -Seconds 10
     }
     
+    # Wenn angefordert, lösche und erstelle die Datenbank neu
+    if ($DropDatabase) {
+        Write-Host "Lösche bestehende Datenbank $DbName..." -ForegroundColor Yellow
+        
+        # Verbindungen trennen und Datenbank löschen
+        $dropSql = @"
+-- Trenne alle Verbindungen zur Datenbank
+SELECT pg_terminate_backend(pg_stat_activity.pid)
+FROM pg_stat_activity
+WHERE pg_stat_activity.datname = '$DbName'
+AND pid <> pg_backend_pid();
+
+-- Lösche die Datenbank
+DROP DATABASE IF EXISTS $DbName;
+
+-- Erstelle die Datenbank neu
+CREATE DATABASE $DbName OWNER $User;
+"@
+        
+        # SQL über temporäre Datei ausführen
+        $dropSqlFile = "drop_temp.sql"
+        $dropSql | Out-File -FilePath $dropSqlFile -Encoding utf8
+        
+        # Führe SQL aus im postgres-System (nicht die zu löschende Datenbank)
+        Get-Content $dropSqlFile | docker exec -i $ContainerName psql -U $User -d postgres
+        Remove-Item -Path $dropSqlFile -Force
+        
+        Write-Host "Datenbank $DbName neu erstellt." -ForegroundColor Green
+    } else {
+        # Alternativ nur die Tabellen leeren
+        Write-Host "Leere bestehende Tabellen in $DbName..." -ForegroundColor Yellow
+        
+        # Erhalte alle Tabellennamen und lösche die Daten
+        $truncateSql = @"
+DO \$\$
+DECLARE
+    tabname text;
+BEGIN
+    FOR tabname IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public')
+    LOOP
+        EXECUTE 'TRUNCATE TABLE ' || quote_ident(tabname) || ' CASCADE';
+    END LOOP;
+END \$\$;
+"@
+        
+        # SQL über temporäre Datei ausführen
+        $truncateSqlFile = "truncate_temp.sql"
+        $truncateSql | Out-File -FilePath $truncateSqlFile -Encoding utf8
+        
+        # Lösche Daten aus allen Tabellen
+        Get-Content $truncateSqlFile | docker exec -i $ContainerName psql -U $User -d $DbName
+        Remove-Item -Path $truncateSqlFile -Force
+        
+        Write-Host "Tabellen in $DbName geleert." -ForegroundColor Green
+    }
+    
     # Führe die Wiederherstellung durch
     Write-Host "Stelle $DbName aus Backup wieder her..." -ForegroundColor Yellow
     Get-Content $BackupFile | docker exec -i $ContainerName psql -U $User -d $DbName
@@ -386,7 +443,8 @@ function Restore-SpecificBackup {
 function Restore-LuckPermsBackup {
     param (
         [Parameter(Mandatory=$true)]
-        [string]$BackupFile
+        [string]$BackupFile,
+        [switch]$DropDatabase = $false
     )
     
     # Lade Umgebungsvariablen
@@ -407,7 +465,7 @@ function Restore-LuckPermsBackup {
     }
     
     # Rufe die Funktion zum Wiederherstellen auf
-    Restore-SpecificBackup -ContainerName "luckperms-postgres" -DbName "luckperms" -User "luckperms" -Password $env:LUCKPERMS_DB_PASSWORD -BackupFile $BackupFile
+    Restore-SpecificBackup -ContainerName "luckperms-postgres" -DbName "luckperms" -User "luckperms" -Password $env:LUCKPERMS_DB_PASSWORD -BackupFile $BackupFile -DropDatabase:$DropDatabase
 }
 
 # Hauptmenü
@@ -461,8 +519,20 @@ if ($Action) {
             # Zeige verfügbare Backups an
             $files = Show-BackupFiles -Pattern "luckperms-*.sql"
             if ($files) {
-                $selectedFile = $files[0].FullName
-                Restore-LuckPermsBackup -BackupFile $selectedFile
+                Write-Host "0. Zurück zum Hauptmenü"
+                $fileChoice = Read-Host "Wähle ein Backup zur Wiederherstellung (1-$([Math]::Min($files.Count, 10)) oder 0 für Abbruch)"
+                
+                if ($fileChoice -match '^\d+$' -and [int]$fileChoice -gt 0 -and [int]$fileChoice -le $files.Count) {
+                    $selectedFile = $files[[int]$fileChoice-1].FullName
+                    $confirm = Read-Host "Möchtest du das Backup '$selectedFile' wirklich wiederherstellen? (j/n)"
+                    
+                    if ($confirm -eq "j") {
+                        $dropDb = Read-Host "Datenbank komplett neu erstellen? Dies löscht alle bestehenden Daten! (j/n)"
+                        $dropDatabase = $dropDb -eq "j"
+                        
+                        Restore-LuckPermsBackup -BackupFile $selectedFile -DropDatabase:$dropDatabase
+                    }
+                }
             }
         }
         default { Write-Host "Ungültige Aktion: $Action" -ForegroundColor Red }
@@ -499,7 +569,10 @@ if ($Action) {
                         $confirm = Read-Host "Möchtest du das Backup '$selectedFile' wirklich wiederherstellen? (j/n)"
                         
                         if ($confirm -eq "j") {
-                            Restore-LuckPermsBackup -BackupFile $selectedFile
+                            $dropDb = Read-Host "Datenbank komplett neu erstellen? Dies löscht alle bestehenden Daten! (j/n)"
+                            $dropDatabase = $dropDb -eq "j"
+                            
+                            Restore-LuckPermsBackup -BackupFile $selectedFile -DropDatabase:$dropDatabase
                         }
                     }
                 }
