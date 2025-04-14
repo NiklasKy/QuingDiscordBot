@@ -334,6 +334,82 @@ function Wait-ForDocker {
     return $false
 }
 
+# Funktion zum Laden eines bestimmten Backups
+function Restore-SpecificBackup {
+    param (
+        [string]$ContainerName,
+        [string]$DbName,
+        [string]$User,
+        [string]$Password,
+        [string]$BackupFile
+    )
+    
+    if (-not (Test-Path $BackupFile)) {
+        Write-Host "Die angegebene Backup-Datei '$BackupFile' existiert nicht." -ForegroundColor Red
+        return $false
+    }
+    
+    Write-Host "Bereite Wiederherstellung von $DbName aus $BackupFile vor..." -ForegroundColor Yellow
+    
+    # Konvertiere Container-Namen zu Service-Namen für docker-compose
+    $serviceName = switch ($ContainerName) {
+        "luckperms-postgres" { "luckperms-db" }
+        "husksync-postgres" { "husksync-db" }
+        "quingcraft-postgres" { "quingcraft-db" }
+        "minecraft-mysql" { "minecraft-mysql" }
+        default { $ContainerName }
+    }
+    
+    # Prüfe, ob der Container bereits läuft
+    $containerRunning = docker ps --format "{{.Names}}" | Select-String -Pattern $ContainerName
+    
+    if (-not $containerRunning) {
+        Write-Host "Starte $ContainerName..." -ForegroundColor Yellow
+        docker-compose up -d $serviceName
+        Start-Sleep -Seconds 10
+    }
+    
+    # Führe die Wiederherstellung durch
+    Write-Host "Stelle $DbName aus Backup wieder her..." -ForegroundColor Yellow
+    Get-Content $BackupFile | docker exec -i $ContainerName psql -U $User -d $DbName
+    
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Wiederherstellung erfolgreich!" -ForegroundColor Green
+        return $true
+    } else {
+        Write-Host "Fehler bei der Wiederherstellung!" -ForegroundColor Red
+        return $false
+    }
+}
+
+# Funktion zum manuellen Wiederherstellen eines LuckPerms-Backups
+function Restore-LuckPermsBackup {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$BackupFile
+    )
+    
+    # Lade Umgebungsvariablen
+    if (-not $env:LUCKPERMS_DB_PASSWORD) {
+        Write-Host "Lade Umgebungsvariablen aus .env Datei..." -ForegroundColor Yellow
+        $envPath = Join-Path $PSScriptRoot ".env"
+        if (Test-Path $envPath) {
+            Get-Content $envPath | ForEach-Object {
+                if ($_ -match '^([^=]+)=(.*)$') {
+                    $name = $matches[1]
+                    $value = $matches[2]
+                    # Entferne Anführungszeichen, falls vorhanden
+                    $value = $value.Trim('"''')
+                    [Environment]::SetEnvironmentVariable($name, $value, "Process")
+                }
+            }
+        }
+    }
+    
+    # Rufe die Funktion zum Wiederherstellen auf
+    Restore-SpecificBackup -ContainerName "luckperms-postgres" -DbName "luckperms" -User "luckperms" -Password $env:LUCKPERMS_DB_PASSWORD -BackupFile $BackupFile
+}
+
 # Hauptmenü
 function Show-Menu {
     Clear-Host
@@ -342,8 +418,31 @@ function Show-Menu {
     Write-Host "1. Backup erstellen"
     Write-Host "2. Container mit Backup-Wiederherstellung starten"
     Write-Host "3. Alle geplanten Aufgaben erstellen"
-    Write-Host "4. Beenden"
-    Write-Host "`nBitte wähle eine Option (1-4): " -NoNewline -ForegroundColor Yellow
+    Write-Host "4. LuckPerms-Backup wiederherstellen"
+    Write-Host "5. Beenden"
+    Write-Host "`nBitte wähle eine Option (1-5): " -NoNewline -ForegroundColor Yellow
+}
+
+# Funktion zum Anzeigen des Backup-Verzeichnisses
+function Show-BackupFiles {
+    param (
+        [string]$Pattern = "*"
+    )
+    
+    $files = Get-ChildItem -Path $backupPath -Filter $Pattern | 
+             Sort-Object LastWriteTime -Descending
+    
+    if ($files.Count -eq 0) {
+        Write-Host "Keine Backup-Dateien gefunden." -ForegroundColor Yellow
+        return $null
+    }
+    
+    Write-Host "Verfügbare Backup-Dateien:" -ForegroundColor Cyan
+    for ($i = 0; $i -lt [Math]::Min($files.Count, 10); $i++) {
+        Write-Host "$($i+1). $($files[$i].Name) ($(Get-Date $files[$i].LastWriteTime -Format 'yyyy-MM-dd HH:mm:ss'))"
+    }
+    
+    return $files
 }
 
 # Hauptprogramm
@@ -358,6 +457,14 @@ if ($Action) {
         "shutdown-backup" { Invoke-Backup -BackupType "shutdown" }
         "startup-restore" { Start-WithBackup }
         "create-tasks" { Create-AllTasks }
+        "restore-luckperms" { 
+            # Zeige verfügbare Backups an
+            $files = Show-BackupFiles -Pattern "luckperms-*.sql"
+            if ($files) {
+                $selectedFile = $files[0].FullName
+                Restore-LuckPermsBackup -BackupFile $selectedFile
+            }
+        }
         default { Write-Host "Ungültige Aktion: $Action" -ForegroundColor Red }
     }
 } else {
@@ -381,7 +488,26 @@ if ($Action) {
                 Write-Host "`nDrücke eine beliebige Taste zum Fortfahren..."
                 $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
             }
-            "4" { return }
+            "4" {
+                $files = Show-BackupFiles -Pattern "luckperms-*.sql"
+                if ($files) {
+                    Write-Host "0. Zurück zum Hauptmenü"
+                    $fileChoice = Read-Host "Wähle ein Backup zur Wiederherstellung (1-$([Math]::Min($files.Count, 10)) oder 0 für Abbruch)"
+                    
+                    if ($fileChoice -match '^\d+$' -and [int]$fileChoice -gt 0 -and [int]$fileChoice -le $files.Count) {
+                        $selectedFile = $files[[int]$fileChoice-1].FullName
+                        $confirm = Read-Host "Möchtest du das Backup '$selectedFile' wirklich wiederherstellen? (j/n)"
+                        
+                        if ($confirm -eq "j") {
+                            Restore-LuckPermsBackup -BackupFile $selectedFile
+                        }
+                    }
+                }
+                
+                Write-Host "`nDrücke eine beliebige Taste zum Fortfahren..."
+                $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+            }
+            "5" { return }
             default { 
                 Write-Host "`nUngültige Auswahl!" -ForegroundColor Red 
                 Start-Sleep -Seconds 2
