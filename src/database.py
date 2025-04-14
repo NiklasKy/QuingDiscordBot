@@ -14,6 +14,15 @@ class Database:
     
     def __init__(self) -> None:
         """Initialize database connection."""
+        # Debug: Zeige alle Umgebungsvariablen
+        print("DEBUG: Environment variables:")
+        for key in ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "QUINGCRAFT_DB_PASSWORD"]:
+            value = os.getenv(key)
+            if value:
+                print(f"DEBUG: {key}={value[:3]}...{value[-3:] if len(value) > 6 else '***'}")
+            else:
+                print(f"DEBUG: {key} is not set!")
+        
         # Hole die Umgebungsvariablen
         host = os.getenv("DB_HOST")
         port = os.getenv("DB_PORT")
@@ -31,10 +40,15 @@ class Database:
         # Debug-Ausgabe der Verbindungs-URL (ohne Passwort)
         print(f"DEBUG: Connection string: postgresql://{user}:***@{host}:{port}/{dbname}")
         
-        # Verbinde zur Datenbank
-        self.conn = psycopg2.connect(conn_string)
-        self._create_tables()
-        self._update_schema()
+        try:
+            # Verbinde zur Datenbank
+            self.conn = psycopg2.connect(conn_string)
+            print("DEBUG: Successfully connected to database")
+            self._create_tables()
+            self._update_schema()
+        except Exception as e:
+            print(f"DEBUG: Database connection error: {str(e)}")
+            raise
     
     def _create_tables(self) -> None:
         """Create necessary tables if they don't exist."""
