@@ -11,6 +11,7 @@ import traceback
 import sys
 from typing import Optional, Literal, Dict, Any
 from dotenv import load_dotenv
+import datetime
 
 from .database import Database
 from .rcon import RconHandler
@@ -43,7 +44,24 @@ from .texts import (
     DEBUG_CHECKING_REACTIONS,
     DEBUG_CHECKING_WHITELIST,
     DEBUG_NO_PENDING_REQUESTS,
-    DEBUG_INVALID_MESSAGE_ID
+    DEBUG_INVALID_MESSAGE_ID,
+    # New role-related text constants
+    ROLE_REQUEST_TITLE,
+    ROLE_REQUEST_DESCRIPTION,
+    ROLE_REQUEST_INVALID_NAME,
+    ROLE_REQUEST_SUCCESS,
+    ROLE_REQUEST_APPROVED,
+    ROLE_REQUEST_REJECTED,
+    ROLE_ERROR_APPROVAL,
+    ROLE_ERROR_REJECTION,
+    ROLE_SUB_ERROR,
+    ROLE_NO_SUB,
+    ROLE_SELECTOR_TITLE,
+    ROLE_SELECTOR_DESCRIPTION,
+    ROLE_SELECTOR_SUB_TITLE,
+    ROLE_SELECTOR_SUB_DESCRIPTION,
+    ROLE_SELECTOR_REQUEST_TITLE,
+    ROLE_SELECTOR_REQUEST_DESCRIPTION
 )
 
 load_dotenv()
@@ -283,6 +301,171 @@ class WhitelistView(discord.ui.View):
     async def request_whitelist(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Handle button click."""
         modal = WhitelistModal(self.bot)
+        await interaction.response.send_modal(modal)
+
+class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
+    """Modal for requesting a special role."""
+    
+    minecraft_username = discord.ui.TextInput(
+        label="Minecraft Username",
+        placeholder="Enter your Minecraft username...",
+        required=True,
+        min_length=3,
+        max_length=16
+    )
+    
+    requested_role = discord.ui.TextInput(
+        label="Requested Role",
+        placeholder="Which role would you like to request? (e.g. VIP, MVP, etc.)",
+        required=True,
+        min_length=2,
+        max_length=20
+    )
+    
+    reason = discord.ui.TextInput(
+        label="Reason for Request",
+        placeholder="Why should you receive this role?",
+        required=True,
+        max_length=500,
+        style=discord.TextStyle.paragraph
+    )
+    
+    def __init__(self, bot: commands.Bot) -> None:
+        super().__init__()
+        self.bot = bot
+    
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        """Process the submitted role request."""
+        try:
+            minecraft_username = self.minecraft_username.value.strip()
+            requested_role = self.requested_role.value.strip()
+            reason = self.reason.value.strip()
+            
+            user = interaction.user
+            print(f"Role request from {user.name} ({user.id}) for role: {requested_role}, username: {minecraft_username}")
+            
+            # Verify Minecraft username
+            if not await self.bot.verify_minecraft_username(minecraft_username):
+                await interaction.response.send_message(
+                    ROLE_REQUEST_INVALID_NAME,
+                    ephemeral=True
+                )
+                return
+            
+            # Confirm to the user that the request has been received
+            await interaction.response.send_message(
+                ROLE_REQUEST_SUCCESS.format(role=requested_role),
+                ephemeral=True
+            )
+            
+            # Send the request to the moderator channel
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            mod_channel = interaction.client.get_channel(mod_channel_id)
+            
+            if not mod_channel:
+                print(f"Could not find mod channel with ID {mod_channel_id}")
+                await user.send(ERROR_GENERIC)
+                return
+            
+            account_created = user.created_at.strftime("%m/%d/%Y")
+            joined_server = user.joined_at.strftime("%m/%d/%Y") if user.joined_at else "Unknown"
+            
+            # Create the embed for moderators
+            embed = discord.Embed(
+                title=ROLE_REQUEST_TITLE,
+                description=f"**Minecraft Username**: {minecraft_username}\n**Requested Role**: {requested_role}\n**Discord**: <@{user.id}> ({user.name})\n**Account Created**: {account_created}\n**Joined Server**: {joined_server}",
+                color=0x9b59b6
+            )
+            
+            # Add reason
+            embed.add_field(name="Reason", value=reason, inline=False)
+            
+            # Send the embed to the moderator channel
+            message = await mod_channel.send(embed=embed)
+            
+            # Add reactions for approval/rejection
+            await message.add_reaction("✅")
+            await message.add_reaction("❌")
+            
+            # Store the role request in a new dictionary or the same as whitelist requests
+            if not hasattr(self.bot, 'role_requests'):
+                self.bot.role_requests = {}
+            
+            # Format: {user_id: (message_id, minecraft_username, requested_role)}
+            self.bot.role_requests[user.id] = (message.id, minecraft_username, requested_role)
+            print(f"Added role request for {user.id}: {message.id}, {requested_role}")
+            
+        except Exception as e:
+            print(f"Error processing role request: {str(e)}")
+            traceback.print_exc()
+            # Try to send an error message to the user
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        ERROR_PROCESSING,
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        ERROR_PROCESSING,
+                        ephemeral=True
+                    )
+            except:
+                pass
+
+class RoleSelectorView(discord.ui.View):
+    """View containing role selection buttons."""
+    
+    def __init__(self, bot: commands.Bot) -> None:
+        super().__init__(timeout=None)
+        self.bot = bot
+    
+    @discord.ui.button(label="Get Sub Role", style=discord.ButtonStyle.success, emoji="⭐", custom_id="role_selector:sub")
+    async def get_sub_role(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Handle Sub role button click."""
+        user = interaction.user
+        
+        # Check if user has the Sub role on Discord
+        sub_role_id = None
+        for key, value in os.environ.items():
+            if key.startswith("ROLE_MAPPING_SUB"):
+                parts = value.split(":", 1)
+                if len(parts) == 2:
+                    discord_role_ids_str = parts[0]
+                    discord_role_ids = [int(role_id.strip()) for role_id in discord_role_ids_str.split(",")]
+                    if discord_role_ids:
+                        sub_role_id = discord_role_ids[0]
+                        break
+        
+        if not sub_role_id:
+            await interaction.response.send_message(
+                ROLE_SUB_ERROR,
+                ephemeral=True
+            )
+            return
+        
+        # Check if user has the Discord Sub role
+        has_sub_role = False
+        for role in user.roles:
+            if role.id == sub_role_id:
+                has_sub_role = True
+                break
+        
+        if not has_sub_role:
+            await interaction.response.send_message(
+                ROLE_NO_SUB,
+                ephemeral=True
+            )
+            return
+        
+        # Ask for Minecraft username
+        modal = RoleModal(self.bot)
+        await interaction.response.send_modal(modal)
+    
+    @discord.ui.button(label="Request Special Role", style=discord.ButtonStyle.primary, emoji="🏆", custom_id="role_selector:request")
+    async def request_special_role(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
+        """Handle special role request button click."""
+        modal = RoleRequestModal(self.bot)
         await interaction.response.send_modal(modal)
 
 class AdminCommands(commands.Cog):
@@ -903,22 +1086,28 @@ class QuingCraftBot(commands.Bot):
         
         # Create new message
         embed = discord.Embed(
-            title="Update Your Game Roles",
-            description="Click the button below to update your in-game roles based on your Discord roles.",
+            title=ROLE_SELECTOR_TITLE,
+            description=ROLE_SELECTOR_DESCRIPTION,
             color=discord.Color.green()
         )
         
-        # Add info about available roles
+        # Add info about available options
         embed.add_field(
-            name="Available Roles",
-            value="• Your Discord roles will be synchronized with the game\n• Make sure you're using the same Minecraft username\n• Optional: Link your Twitch account for additional benefits",
+            name=ROLE_SELECTOR_SUB_TITLE,
+            value=ROLE_SELECTOR_SUB_DESCRIPTION,
             inline=False
         )
         
-        view = RoleView(self)
+        embed.add_field(
+            name=ROLE_SELECTOR_REQUEST_TITLE,
+            value=ROLE_SELECTOR_REQUEST_DESCRIPTION,
+            inline=False
+        )
+        
+        view = RoleSelectorView(self)
         message = await channel.send(embed=embed, view=view)
         self.role_message_id = message.id
-        print(f"Created role message with ID {message.id}")
+        print(f"Created role selector message with ID {message.id}")
     
     async def verify_minecraft_username(self, username: str) -> bool:
         """Verify if a Minecraft username is valid using Mojang API."""
@@ -1066,77 +1255,60 @@ class QuingCraftBot(commands.Bot):
     # Event listener for reactions
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload: discord.RawReactionActionEvent) -> None:
-        """Handle reactions on whitelist requests using raw events."""
-        # Ignore bot's own reactions
+        """Handle reaction adds."""
+        # Ignore bot reactions
         if payload.user_id == self.user.id:
-            print(f"[REACTION] Ignoring bot's own reaction")
             return
         
-        # Ignore reactions outside the mod channel
-        mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
-        if payload.channel_id != mod_channel_id:
-            return
+        # Check if it's a reaction on a whitelist request
+        found_request = False
         
-        emoji = str(payload.emoji)
-        message_id = payload.message_id
-        moderator_id = payload.user_id  # ID of the moderator who reacted
-        
-        print(f"[REACTION] Detected: {emoji} on message {message_id} by user {moderator_id}")
-        
-        # Especially important: Check if this message_id exists as a value in pending_requests
-        found_user_id = None
-        for user_id, req_message_id in self.pending_requests.items():
-            if req_message_id == message_id:
-                found_user_id = user_id
-                print(f"[REACTION] Found matching request from user {found_user_id}")
+        # Check whitelist requests first
+        for user_id, message_id in self.pending_requests.items():
+            if message_id == payload.message_id:
+                found_request = True
+                await self._handle_whitelist_reaction(payload, user_id, message_id)
                 break
         
-        if found_user_id is None:
-            print(f"[REACTION] No matching request found for message {message_id}")
-            
-            # Try to find the message anyway and extract the user ID
-            try:
-                channel = self.get_channel(payload.channel_id)
-                if not channel:
-                    print(f"[REACTION] Could not get channel {payload.channel_id}")
-                    return
-                
-                message = await channel.fetch_message(message_id)
-                if not message or not message.embeds:
-                    print(f"[REACTION] Message has no embeds")
-                    return
-                
-                embed = message.embeds[0]
-                # Check if it's a whitelist request
-                if embed.title != MOD_REQUEST_TITLE:
-                    print(f"[REACTION] Message is not a whitelist request")
-                    return
-                
-                desc = embed.description
-                
-                import re
-                match = re.search(r"Discord: <@(\d+)>", desc)
-                if match:
-                    found_user_id = int(match.group(1))
-                    print(f"[REACTION] Extracted user ID from embed: {found_user_id}")
-                    
-                    # Save for future use
-                    self.pending_requests[found_user_id] = message_id
-                else:
-                    print(f"[REACTION] Could not extract user ID from embed")
-                    return
-            except Exception as e:
-                print(f"[REACTION] Error extracting user ID: {e}")
-                traceback.print_exc()
-                return
+        # If not found in whitelist, check role requests
+        if not found_request and hasattr(self, 'role_requests'):
+            for user_id, (message_id, minecraft_username, requested_role) in self.role_requests.items():
+                if message_id == payload.message_id:
+                    found_request = True
+                    await self._handle_role_request_reaction(payload, user_id, minecraft_username, requested_role)
+                    break
+    
+    async def _handle_whitelist_reaction(self, payload, user_id, message_id):
+        """Handle reactions on whitelist requests."""
+        # Get channel and message
+        channel = self.get_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
         
-        # Process the reaction based on the emoji
-        if emoji == "✅":
-            print(f"[REACTION] Processing approval for user {found_user_id} by moderator {moderator_id}")
-            await self._approve_whitelist_request_with_mod(found_user_id, payload.channel_id, moderator_id)
-        elif emoji == "❌":
-            print(f"[REACTION] Processing rejection for user {found_user_id} by moderator {moderator_id}")
-            await self._reject_whitelist_request_with_mod(found_user_id, moderator_id)
+        # Get the user who reacted (moderator)
+        guild = self.get_guild(payload.guild_id)
+        moderator = guild.get_member(payload.user_id)
+        
+        # Check if the reactor has staff role
+        if not any(role.id in self.staff_roles for role in moderator.roles):
+            # Remove the reaction if not staff
+            for reaction in message.reactions:
+                if reaction.emoji in ["✅", "❌"]:
+                    await reaction.remove(moderator)
+            return
+        
+        # Get the requestor
+        requestor = guild.get_member(user_id)
+        if not requestor:
+            await channel.send(f"Error: Could not find user with ID {user_id}")
+            return
+        
+        # Handle approval
+        if payload.emoji.name == "✅":
+            print(f"[REACTION] Processing approval for user {user_id} by moderator {moderator.display_name}")
+            await self._approve_whitelist_request_with_mod(user_id, payload.channel_id, payload.user_id)
+        elif payload.emoji.name == "❌":
+            print(f"[REACTION] Processing rejection for user {user_id} by moderator {moderator.display_name}")
+            await self._reject_whitelist_request_with_mod(user_id, payload.user_id)
     
     async def _approve_whitelist_request_with_mod(self, user_id: int, channel_id: int, moderator_id: int) -> None:
         """Approve a whitelist request with moderator ID."""
@@ -1250,6 +1422,82 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"Error checking reactions: {str(e)}")
             traceback.print_exc()
+
+    async def _handle_role_request_reaction(self, payload, user_id, minecraft_username, requested_role):
+        """Handle reactions on role requests."""
+        # Get channel and message
+        channel = self.get_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+        
+        # Get the user who reacted (moderator)
+        guild = self.get_guild(payload.guild_id)
+        moderator = guild.get_member(payload.user_id)
+        
+        # Check if the reactor has staff role
+        if not any(role.id in self.staff_roles for role in moderator.roles):
+            # Remove the reaction if not staff
+            for reaction in message.reactions:
+                if reaction.emoji in ["✅", "❌"]:
+                    await reaction.remove(moderator)
+            return
+        
+        # Get the requestor
+        requestor = guild.get_member(user_id)
+        if not requestor:
+            await channel.send(f"Error: Could not find user with ID {user_id}")
+            return
+        
+        # Handle approval
+        if payload.emoji.name == "✅":
+            print(f"[ROLE] Processing approval for {requested_role} role for {minecraft_username}")
+            
+            try:
+                # Add the role to the user in-game using lpv
+                rcon_response = await self.rcon.execute_command(f"lpv user {minecraft_username} parent set {requested_role}")
+                
+                # Update the embed to indicate approval
+                embed = message.embeds[0]
+                embed.color = discord.Color.green()
+                embed.set_footer(text=f"Approved by {moderator.display_name} | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                await message.edit(embed=embed)
+                
+                # Notify the user
+                await requestor.send(ROLE_REQUEST_APPROVED.format(role=requested_role, username=minecraft_username))
+                
+                # Remove the request from our tracking
+                if user_id in self.role_requests:
+                    del self.role_requests[user_id]
+                    
+                # Log the approval
+                print(f"[ROLE] Role request approved: {minecraft_username} -> {requested_role}")
+                
+            except Exception as e:
+                print(f"[ROLE] Error approving role request: {e}")
+                await channel.send(ROLE_ERROR_APPROVAL.format(error=str(e)))
+        
+        elif payload.emoji.name == "❌":
+            print(f"[ROLE] Processing rejection for {requested_role} role for {minecraft_username}")
+            
+            try:
+                # Update the embed to indicate rejection
+                embed = message.embeds[0]
+                embed.color = discord.Color.red()
+                embed.set_footer(text=f"Rejected by {moderator.display_name} | {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
+                await message.edit(embed=embed)
+                
+                # Notify the user
+                await requestor.send(ROLE_REQUEST_REJECTED.format(role=requested_role))
+                
+                # Remove the request from our tracking
+                if user_id in self.role_requests:
+                    del self.role_requests[user_id]
+                    
+                # Log the rejection
+                print(f"[ROLE] Role request rejected: {minecraft_username} -> {requested_role}")
+                
+            except Exception as e:
+                print(f"[ROLE] Error rejecting role request: {e}")
+                await channel.send(ROLE_ERROR_REJECTION.format(error=str(e)))
 
 def main() -> None:
     """Start the bot."""
