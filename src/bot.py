@@ -153,19 +153,6 @@ class RoleModal(discord.ui.Modal, title="Role Request"):
             except:
                 pass
 
-class RoleView(discord.ui.View):
-    """View containing the role update button."""
-    
-    def __init__(self, bot: commands.Bot) -> None:
-        super().__init__(timeout=None)
-        self.bot = bot
-    
-    @discord.ui.button(label="Update Game Roles", style=discord.ButtonStyle.secondary, emoji="🔄")
-    async def update_roles(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        """Handle button click."""
-        modal = RoleModal(self.bot)
-        await interaction.response.send_modal(modal)
-
 class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
     """Modal for entering Minecraft username."""
     
@@ -1212,11 +1199,14 @@ class QuingCraftBot(commands.Bot):
                     await message.channel.send(f"Result: {'Success' if result else 'Failed'}")
                 else:
                     await message.channel.send("Please provide a username")
+            elif message.content == "!debug-recreate":
+                await self._debug_recreate_messages(message)
             elif message.content.startswith("!debug-memory"):
                 # Show important variables and their content
                 memory_info = "**Memory Debug:**\n"
                 memory_info += f"- pending_requests: {self.pending_requests}\n"
                 memory_info += f"- whitelist_message_id: {self.whitelist_message_id}\n"
+                memory_info += f"- role_message_id: {getattr(self, 'role_message_id', None)}\n"
                 memory_info += f"- staff_roles: {self.staff_roles}\n"
                 await message.channel.send(memory_info)
         
@@ -1498,6 +1488,42 @@ class QuingCraftBot(commands.Bot):
             except Exception as e:
                 print(f"[ROLE] Error rejecting role request: {e}")
                 await channel.send(ROLE_ERROR_REJECTION.format(error=str(e)))
+
+    async def _debug_recreate_messages(self, message):
+        """Force recreate whitelist and role messages."""
+        await message.channel.send("Recreating whitelist and role messages...")
+        
+        # Delete old messages if they exist
+        channel_id = int(os.getenv("WHITELIST_CHANNEL_ID"))
+        channel = self.get_channel(channel_id)
+        
+        if not channel:
+            await message.channel.send(f"Could not find channel with ID {channel_id}")
+            return
+        
+        # Delete old whitelist message
+        if self.whitelist_message_id:
+            try:
+                old_message = await channel.fetch_message(self.whitelist_message_id)
+                await old_message.delete()
+                self.whitelist_message_id = None
+            except discord.NotFound:
+                pass
+        
+        # Delete old role message
+        if hasattr(self, 'role_message_id') and self.role_message_id:
+            try:
+                old_message = await channel.fetch_message(self.role_message_id)
+                await old_message.delete()
+                self.role_message_id = None
+            except discord.NotFound:
+                pass
+        
+        # Create new messages
+        await self.create_whitelist_message()
+        await self.create_role_message()
+        
+        await message.channel.send("Messages recreated successfully!")
 
 def main() -> None:
     """Start the bot."""
