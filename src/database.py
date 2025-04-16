@@ -37,6 +37,7 @@ class Database:
     def _create_tables(self) -> None:
         """Create necessary tables if they don't exist."""
         with self.conn.cursor() as cur:
+            # Whitelist requests table
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS whitelist_requests (
                     id SERIAL PRIMARY KEY,
@@ -47,15 +48,34 @@ class Database:
                     reason TEXT,
                     approved_by BIGINT,
                     rejected_by BIGINT,
-                    processed_at TIMESTAMP
+                    processed_at TIMESTAMP,
+                    message_id BIGINT
                 )
             """)
+            
+            # Role requests table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS role_requests (
+                    id SERIAL PRIMARY KEY,
+                    discord_id BIGINT NOT NULL,
+                    minecraft_username VARCHAR(16) NOT NULL,
+                    requested_role VARCHAR(32) NOT NULL,
+                    status VARCHAR(10) NOT NULL DEFAULT 'pending',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    reason TEXT,
+                    approved_by BIGINT,
+                    rejected_by BIGINT,
+                    processed_at TIMESTAMP,
+                    message_id BIGINT
+                )
+            """)
+            
             self.conn.commit()
     
     def _update_schema(self) -> None:
         """Update database schema if needed."""
         try:
-            # Entfernen der Unique Constraint, falls vorhanden
+            # Update whitelist_requests schema
             with self.conn.cursor() as cur:
                 # Prüfen, ob die Constraint existiert
                 cur.execute("""
@@ -87,6 +107,20 @@ class Database:
                     """)
                     print("Added new columns to whitelist_requests table")
                 
+                # Prüfen, ob die message_id Spalte existiert
+                cur.execute("""
+                    SELECT column_name 
+                    FROM information_schema.columns 
+                    WHERE table_name = 'whitelist_requests' AND column_name = 'message_id'
+                """)
+                if not cur.fetchone():
+                    # message_id Spalte hinzufügen
+                    cur.execute("""
+                        ALTER TABLE whitelist_requests
+                        ADD COLUMN message_id BIGINT
+                    """)
+                    print("Added message_id column to whitelist_requests table")
+                
                 # Entfernen der potenziell problematischen unique index auf minecraft_username
                 cur.execute("""
                     SELECT 1 FROM pg_indexes 
@@ -104,7 +138,7 @@ class Database:
             print(f"Error updating schema: {e}")
             self.conn.rollback()
     
-    def add_whitelist_request(self, discord_id: int, minecraft_username: str, reason: str = None) -> bool:
+    def add_whitelist_request(self, discord_id: int, minecraft_username: str, reason: str = None, message_id: int = None) -> bool:
         """Add a new whitelist request to the database."""
         try:
             with self.conn.cursor() as cur:
@@ -135,6 +169,14 @@ class Database:
                     # Wenn der Benutzer für denselben Minecraft-Namen einen Antrag hat, geben wir true zurück
                     if existing_request[0] == minecraft_username:
                         print(f"This is the same request, returning success")
+                        # Update message_id if provided
+                        if message_id:
+                            cur.execute("""
+                                UPDATE whitelist_requests 
+                                SET message_id = %s
+                                WHERE discord_id = %s AND status = 'pending'
+                            """, (message_id, discord_id))
+                            self.conn.commit()
                         return True
                     return False
                 
@@ -150,10 +192,10 @@ class Database:
                 
                 # Neuen Antrag hinzufügen
                 cur.execute("""
-                    INSERT INTO whitelist_requests (discord_id, minecraft_username, status, reason)
-                    VALUES (%s, %s, 'pending', %s)
+                    INSERT INTO whitelist_requests (discord_id, minecraft_username, status, reason, message_id)
+                    VALUES (%s, %s, 'pending', %s, %s)
                     RETURNING id
-                """, (discord_id, minecraft_username, reason))
+                """, (discord_id, minecraft_username, reason, message_id))
                 self.conn.commit()
                 result = cur.fetchone()
                 return result is not None
@@ -317,4 +359,130 @@ class Database:
     
     def close(self) -> None:
         """Close the database connection."""
-        self.conn.close() 
+        self.conn.close()
+
+    # Füge neue Methoden für Rollenanfragen hinzu
+    def add_role_request(self, discord_id: int, minecraft_username: str, requested_role: str, reason: str = None, message_id: int = None) -> bool:
+        """Add a new role request to the database."""
+        try:
+            with self.conn.cursor() as cur:
+                # Prüfen, ob ein ausstehender Antrag für diesen Benutzer existiert
+                cur.execute("""
+                    SELECT id FROM role_requests
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (discord_id,))
+                if cur.fetchone():
+                    print(f"User {discord_id} already has a pending role request")
+                    # Update message_id if provided and it's a pending request
+                    if message_id:
+                        cur.execute("""
+                            UPDATE role_requests 
+                            SET message_id = %s
+                            WHERE discord_id = %s AND status = 'pending'
+                        """, (message_id, discord_id))
+                        self.conn.commit()
+                    return False
+                
+                # Neuen Antrag hinzufügen
+                cur.execute("""
+                    INSERT INTO role_requests (discord_id, minecraft_username, requested_role, reason, message_id)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                """, (discord_id, minecraft_username, requested_role, reason, message_id))
+                self.conn.commit()
+                result = cur.fetchone()
+                return result is not None
+        except Exception as e:
+            print(f"Database error in add_role_request: {e}")
+            self.conn.rollback()
+            return False
+    
+    def get_pending_role_request(self, discord_id: int) -> Optional[tuple]:
+        """Get a pending role request for a user."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM role_requests
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (discord_id,))
+                return cur.fetchone()
+        except Exception as e:
+            print(f"Database error in get_pending_role_request: {e}")
+            self.conn.rollback()
+            return None
+    
+    def get_all_pending_role_requests(self) -> List[tuple]:
+        """Get all pending role requests."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT * FROM role_requests
+                    WHERE status = 'pending'
+                """)
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Database error in get_all_pending_role_requests: {e}")
+            self.conn.rollback()
+            return []
+    
+    def update_role_request_status(self, request_id: int, status: str, moderator_id: int = None) -> bool:
+        """Update the status of a role request."""
+        try:
+            with self.conn.cursor() as cur:
+                if status == 'approved':
+                    cur.execute("""
+                        UPDATE role_requests
+                        SET status = %s, approved_by = %s, processed_at = NOW()
+                        WHERE id = %s
+                    """, (status, moderator_id, request_id))
+                elif status == 'rejected':
+                    cur.execute("""
+                        UPDATE role_requests
+                        SET status = %s, rejected_by = %s, processed_at = NOW()
+                        WHERE id = %s
+                    """, (status, moderator_id, request_id))
+                else:
+                    cur.execute("""
+                        UPDATE role_requests
+                        SET status = %s
+                        WHERE id = %s
+                    """, (status, request_id))
+                
+                self.conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            print(f"Database error in update_role_request_status: {e}")
+            self.conn.rollback()
+            return False
+    
+    def set_whitelist_request_message_id(self, discord_id: int, message_id: int) -> bool:
+        """Update the message ID for a pending whitelist request."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE whitelist_requests
+                    SET message_id = %s
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (message_id, discord_id))
+                self.conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            print(f"Database error in set_whitelist_request_message_id: {e}")
+            self.conn.rollback()
+            return False
+            
+    def update_role_request_message_id(self, discord_id: int, message_id: int) -> bool:
+        """Update the message ID for a pending role request."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE role_requests
+                    SET message_id = %s
+                    WHERE discord_id = %s AND status = 'pending'
+                """, (message_id, discord_id))
+                self.conn.commit()
+                return cur.rowcount > 0
+        except Exception as e:
+            print(f"Database error in update_role_request_message_id: {e}")
+            self.conn.rollback()
+            return False 

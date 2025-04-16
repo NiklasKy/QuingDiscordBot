@@ -12,6 +12,7 @@ import sys
 from typing import Optional, Literal, Dict, Any
 from dotenv import load_dotenv
 import datetime
+import re
 
 from .database import Database
 from .rcon import RconHandler
@@ -219,13 +220,6 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
                 ephemeral=True
             )
             
-            # Add the request to the database
-            added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason)
-            if not added_request:
-                print(f"Failed to add whitelist request to database for {user.name}")
-                await user.send(ERROR_DATABASE)
-                return
-            
             # Send the request to the moderator channel
             mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
             mod_channel = interaction.client.get_channel(mod_channel_id)
@@ -260,6 +254,13 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
             # Add reactions
             await message.add_reaction("✅")
             await message.add_reaction("❌")
+            
+            # Add the request to the database - now with message_id
+            added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason, message.id)
+            if not added_request:
+                print(f"Failed to add whitelist request to database for {user.name}")
+                await user.send(ERROR_DATABASE)
+                return
             
             # Save the message ID for later
             self.bot.pending_requests[user.id] = message.id
@@ -374,7 +375,10 @@ class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
             await message.add_reaction("✅")
             await message.add_reaction("❌")
             
-            # Store the role request in a new dictionary or the same as whitelist requests
+            # Add role request to database
+            self.bot.db.add_role_request(user.id, minecraft_username, requested_role, reason, message.id)
+            
+            # Store the role request in memory
             if not hasattr(self.bot, 'role_requests'):
                 self.bot.role_requests = {}
             
@@ -1113,6 +1117,7 @@ class QuingCraftBot(commands.Bot):
         # Loading pending requests from the database
         print("Loading pending requests from database...")
         await self.load_pending_requests()
+        await self.load_pending_role_requests()
         
         # Clean up whitelist channel before creating new messages
         await self.clean_whitelist_channel()
@@ -1130,50 +1135,157 @@ class QuingCraftBot(commands.Bot):
             print(f" - {listener}")
     
     async def load_pending_requests(self) -> None:
-        """Load pending requests from the database."""
+        """Load pending whitelist requests from the database and try to find the associated messages."""
         try:
-            # Get all pending requests from the database and try to find the messages
-            pending_requests = self.db.get_all_pending_requests()
-            if not pending_requests:
-                print("No pending requests found in database")
-                return
-            
+            # Get the moderation channel
             mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
             mod_channel = self.get_channel(mod_channel_id)
+            
             if not mod_channel:
-                print(f"Could not find mod channel with ID {mod_channel_id}")
+                print(f"Could not find moderation channel with ID {mod_channel_id}")
                 return
             
-            print(f"Found {len(pending_requests)} pending requests in database")
+            # Get all pending requests from the database
+            pending_requests = self.db.get_all_pending_requests()
+            if not pending_requests:
+                print("No pending whitelist requests found in database")
+                return
             
-            # Search the last 100 messages in the mod channel
-            async for message in mod_channel.history(limit=100):
+            print(f"Found {len(pending_requests)} pending whitelist requests in database")
+            
+            # Initialize the pending_requests dictionary if it doesn't exist
+            if not hasattr(self, 'pending_requests'):
+                self.pending_requests = {}
+            
+            # Create a mapping of discord_ids to request objects for easier lookup
+            requests_by_id = {request['discord_id']: request for request in pending_requests}
+            
+            # Fetch up to 200 messages from the moderation channel to find relevant ones
+            async for message in mod_channel.history(limit=200):
                 if not message.embeds:
                     continue
                 
-                # Check if the message is a whitelist request
                 embed = message.embeds[0]
-                if embed.title != MOD_REQUEST_TITLE:
-                    continue
                 
-                # Extract the user ID from the embed
-                import re
-                match = re.search(r"Discord: <@(\d+)>", embed.description)
-                if not match:
-                    continue
-                
-                user_id = int(match.group(1))
-                
-                # Check if this user has a pending request
-                for req in pending_requests:
-                    if req[1] == user_id:  # req[1] should be the discord_id
-                        print(f"Found message {message.id} for pending request from user {user_id}")
-                        self.pending_requests[user_id] = message.id
-                        break
+                # Find whitelist request messages
+                if hasattr(embed, 'title') and embed.title == MOD_REQUEST_TITLE:
+                    # Extract the discord_id from the embed
+                    try:
+                        description = embed.description
+                        match = re.search(r'<@(\d+)>', description)
+                        if match:
+                            discord_id = int(match.group(1))
+                            
+                            # Check if this user has a pending request
+                            if discord_id in requests_by_id:
+                                request = requests_by_id[discord_id]
+                                # Store the request in memory with the message_id for future processing
+                                minecraft_username = request['minecraft_username']
+                                self.pending_requests[discord_id] = (message.id, minecraft_username)
+                                print(f"Associated request for {discord_id} with message {message.id}")
+                                
+                                # Remove from our mapping so we can track which ones weren't found
+                                requests_by_id.pop(discord_id, None)
+                    except Exception as e:
+                        print(f"Error processing embed in message {message.id}: {str(e)}")
+                    
+            # Log any requests for which we couldn't find messages
+            if requests_by_id:
+                print(f"Could not find messages for {len(requests_by_id)} requests: {list(requests_by_id.keys())}")
             
-            print(f"Loaded {len(self.pending_requests)} pending requests into memory")
+            print(f"Loaded {len(self.pending_requests)} whitelist requests into memory")
+            
         except Exception as e:
-            print(f"Error loading pending requests: {e}")
+            print(f"Error loading pending requests: {str(e)}")
+            traceback.print_exc()
+
+    async def load_pending_role_requests(self) -> None:
+        """Load pending role requests from the database and try to find the associated messages."""
+        try:
+            # Get the moderation channel
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            mod_channel = self.get_channel(mod_channel_id)
+            
+            if not mod_channel:
+                print(f"Could not find moderation channel with ID {mod_channel_id}")
+                return
+            
+            # Get all pending role requests from the database
+            pending_role_requests = self.db.get_all_pending_role_requests()
+            if not pending_role_requests:
+                print("No pending role requests found in database")
+                return
+            
+            print(f"Found {len(pending_role_requests)} pending role requests in database")
+            
+            # Initialize the role_requests dictionary if it doesn't exist
+            if not hasattr(self, 'role_requests'):
+                self.role_requests = {}
+            
+            # Create a mapping of discord_ids to request objects for easier lookup
+            requests_by_id = {request['discord_id']: request for request in pending_role_requests}
+            
+            # Count messages found by message_id and by searching
+            found_by_id = 0
+            found_by_search = 0
+            
+            # First, try to load requests directly from message IDs
+            for discord_id, request in requests_by_id.copy().items():
+                if request['message_id']:
+                    try:
+                        # Try to fetch the message directly by ID
+                        message = await mod_channel.fetch_message(request['message_id'])
+                        minecraft_username = request['minecraft_username']
+                        requested_role = request['requested_role']
+                        self.role_requests[discord_id] = (message.id, minecraft_username, requested_role)
+                        found_by_id += 1
+                        requests_by_id.pop(discord_id, None)
+                        continue
+                    except Exception as e:
+                        print(f"Could not find message by ID {request['message_id']} for role request {discord_id}: {str(e)}")
+            
+            # For any remaining requests, search through recent messages
+            if requests_by_id:
+                async for message in mod_channel.history(limit=200):
+                    if not message.embeds:
+                        continue
+                        
+                    embed = message.embeds[0]
+                    
+                    # Find role request messages
+                    if hasattr(embed, 'title') and embed.title == ROLE_REQUEST_TITLE:
+                        # Extract the discord_id from the embed
+                        try:
+                            description = embed.description
+                            match = re.search(r'<@(\d+)>', description)
+                            if match:
+                                discord_id = int(match.group(1))
+                                
+                                # Check if this user has a pending request
+                                if discord_id in requests_by_id:
+                                    request = requests_by_id[discord_id]
+                                    # Store the request in memory with the message_id for future processing
+                                    minecraft_username = request['minecraft_username']
+                                    requested_role = request['requested_role']
+                                    self.role_requests[discord_id] = (message.id, minecraft_username, requested_role)
+                                    found_by_search += 1
+                                    
+                                    # Update the message_id in the database
+                                    self.db.update_role_request_message_id(discord_id, message.id)
+                                    
+                                    # Remove from our mapping so we can track which ones weren't found
+                                    requests_by_id.pop(discord_id, None)
+                        except Exception as e:
+                            print(f"Error processing embed in message {message.id} for role requests: {str(e)}")
+            
+            # Log any requests for which we couldn't find messages
+            if requests_by_id:
+                print(f"Could not find messages for {len(requests_by_id)} role requests: {list(requests_by_id.keys())}")
+            
+            print(f"Loaded {len(self.role_requests)} role requests into memory (by ID: {found_by_id}, by search: {found_by_search})")
+            
+        except Exception as e:
+            print(f"Error loading pending role requests: {str(e)}")
             traceback.print_exc()
     
     async def clean_whitelist_channel(self) -> None:
@@ -1290,21 +1402,54 @@ class QuingCraftBot(commands.Bot):
         # Check if it's a reaction on a whitelist request
         found_request = False
         
-        # Check whitelist requests first
+        # Check whitelist requests first using in-memory dictionary
         for user_id, message_id in self.pending_requests.items():
             if message_id == payload.message_id:
                 found_request = True
                 await self._handle_whitelist_reaction(payload, user_id, message_id)
                 break
         
-        # If not found in whitelist, check role requests
+        # If not found, check if it's a reaction on a mod channel message with embed
+        if not found_request:
+            mod_channel_id = int(os.getenv("MOD_CHANNEL_ID"))
+            
+            # Only proceed if we're in the mod channel
+            if payload.channel_id == mod_channel_id:
+                try:
+                    # Get the channel and message
+                    channel = self.get_channel(payload.channel_id)
+                    message = await channel.fetch_message(payload.message_id)
+                    
+                    # Check if it has embeds and is a whitelist request
+                    if message.embeds and message.embeds[0].title == MOD_REQUEST_TITLE:
+                        # Extract the Discord user ID from the embed
+                        import re
+                        match = re.search(r"Discord: <@(\d+)>", message.embeds[0].description)
+                        if match:
+                            user_id = int(match.group(1))
+                            
+                            # Check if this user has a pending request in database
+                            request = self.db.get_pending_request(user_id)
+                            if request:
+                                # Store it in memory for future use
+                                self.pending_requests[user_id] = message.id
+                                print(f"Found pending request for user {user_id} during reaction processing")
+                                
+                                # Process the reaction
+                                found_request = True
+                                await self._handle_whitelist_reaction(payload, user_id, message.id)
+                except Exception as e:
+                    print(f"Error processing reaction on potential whitelist message: {e}")
+                    traceback.print_exc()
+        
+        # If still not found, check role requests
         if not found_request and hasattr(self, 'role_requests'):
             for user_id, (message_id, minecraft_username, requested_role) in self.role_requests.items():
                 if message_id == payload.message_id:
                     found_request = True
                     await self._handle_role_request_reaction(payload, user_id, minecraft_username, requested_role)
                     break
-    
+
     async def _handle_whitelist_reaction(self, payload, user_id, message_id):
         """Handle reactions on whitelist requests."""
         # Get channel and message
