@@ -1001,43 +1001,54 @@ class QuingCraftBot(commands.Bot):
         print("Cleaning up whitelist commands...")
         
         try:
-            # Get all existing commands
-            commands = await self.tree.fetch_commands()
-            
-            # Delete all slash commands that are related to whitelist
-            for command in commands:
+            # Löschen von globalen Befehlen
+            print("Deleting global commands...")
+            global_commands = await self.tree.fetch_commands()
+            for command in global_commands:
                 if command.name == "qc":
-                    print(f"Removing command: {command.name} (ID: {command.id})")
+                    print(f"Removing global command: {command.name} (ID: {command.id})")
                     await self.tree.delete_command(command.id)
             
+            # Löschen von guild-spezifischen Befehlen
+            guild_id = os.getenv("DISCORD_GUILD_ID")
+            if guild_id:
+                guild = discord.Object(id=int(guild_id))
+                guild_commands = await self.tree.fetch_commands(guild=guild)
+                
+                for command in guild_commands:
+                    if command.name == "qc":
+                        print(f"Removing guild command: {command.name} (ID: {command.id})")
+                        await self.tree.delete_command(command.id, guild=guild)
+            
             # Wait a moment to ensure commands are deleted
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # Add the AdminCommands cog with slash commands
             print("Adding AdminCommands cog...")
             admin_cog = AdminCommands(self)
             await self.add_cog(admin_cog)
             
-            # Explicitly sync commands for the specific guild
-            guild_id = os.getenv("DISCORD_GUILD_ID")
+            # Explizites Sync nur für die spezifische Guild, kein globaler Sync
             if guild_id:
                 print(f"Force syncing commands to guild ID: {guild_id}")
                 guild = discord.Object(id=int(guild_id))
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
+                
+                # Überprüfen der sync ergebnisse
+                print("Verifying guild commands...")
+                guild_updated_commands = await self.tree.fetch_commands(guild=guild)
+                for cmd in guild_updated_commands:
+                    print(f"Registered guild command: {cmd.name} (ID: {cmd.id})")
+                    if hasattr(cmd, 'children'):
+                        for child in cmd.children:
+                            print(f" - Child command: {child.name}")
             
-            # Also sync globally
-            print("Force syncing commands globally...")
-            await self.tree.sync()
-            print("Command sync complete.")
-            
-            print("Verifying commands...")
-            updated_commands = await self.tree.fetch_commands()
-            for cmd in updated_commands:
-                print(f"Registered command: {cmd.name} (ID: {cmd.id})")
-                if hasattr(cmd, 'children'):
-                    for child in cmd.children:
-                        print(f" - Child command: {child.name}")
+            # Überprüfen der globalen Befehle - aber kein Sync durchführen
+            print("Verifying global commands...")
+            global_updated_commands = await self.tree.fetch_commands()
+            for cmd in global_updated_commands:
+                print(f"Registered global command: {cmd.name} (ID: {cmd.id})")
             
         except Exception as e:
             print(f"Error during command cleanup: {e}")
