@@ -303,7 +303,7 @@ class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
     
     requested_role = discord.ui.TextInput(
         label="Requested Role",
-        placeholder="Which role would you like to request? (e.g. VIP, MVP, etc.)",
+        placeholder="Enter either 'VIP' or 'VTuber'",
         required=True,
         min_length=2,
         max_length=20
@@ -311,7 +311,7 @@ class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
     
     reason = discord.ui.TextInput(
         label="Reason for Request",
-        placeholder="Why should you receive this role?",
+        placeholder="Why should you receive this role? Provide details to support your request.",
         required=True,
         max_length=500,
         style=discord.TextStyle.paragraph
