@@ -407,7 +407,7 @@ class RoleSelectorView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
     
-    @discord.ui.button(label="Get Sub Role", style=discord.ButtonStyle.success, emoji="⭐", custom_id="role_selector:sub")
+    @discord.ui.button(label="Get Sub Role", style=discord.ButtonStyle.success, emoji="⭐", custom_id="role_selector:sub_v2")
     async def get_sub_role(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Handle Sub role button click."""
         user = interaction.user
@@ -449,7 +449,7 @@ class RoleSelectorView(discord.ui.View):
         modal = RoleModal(self.bot)
         await interaction.response.send_modal(modal)
     
-    @discord.ui.button(label="Request Special Role", style=discord.ButtonStyle.primary, emoji="🏆", custom_id="role_selector:request")
+    @discord.ui.button(label="Request Special Role", style=discord.ButtonStyle.primary, emoji="🏆", custom_id="role_selector:request_v2")
     async def request_special_role(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Handle special role request button click."""
         modal = RoleRequestModal(self.bot)
