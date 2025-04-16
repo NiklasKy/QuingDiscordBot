@@ -577,31 +577,76 @@ class AdminCommands(commands.Cog):
         try:
             # Get the whitelist directly via RCON
             rcon_response = await self.bot.rcon.execute_command("vpw list")
+            print(f"Raw VPW list response: {rcon_response}")
             
             # Get user mappings from database
             whitelist_users = self.bot.db.get_whitelist_users()
-            user_mappings = {mc_username: discord_id for mc_username, discord_id in whitelist_users}
+            user_mappings = {mc_username.lower(): discord_id for mc_username, discord_id in whitelist_users}
             
             # Format and send the response
             if rcon_response and "Error:" not in rcon_response:
                 # Process the response to extract usernames
-                lines = rcon_response.strip().split('\n')
                 usernames = []
                 
-                # Parse the usernames from the response
+                # Debug the raw response format
+                lines = rcon_response.strip().split('\n')
+                print(f"Split lines from response: {lines}")
+                
+                # Parse the usernames from the response - handle different formats
                 for line in lines:
-                    if line.strip():
-                        # Handle different response formats
-                        parts = line.split()
-                        # Usually the format is a simple list of names
-                        username = parts[0] if parts else line.strip()
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    print(f"Processing line: '{line}'")
+                    # Check for common patterns
+                    if "Whitelisted" in line or "Players:" in line:
+                        # Skip header lines
+                        continue
+                    
+                    # Extract actual username - could be various formats
+                    # Try to handle common formats:
+                    # 1. Just the username
+                    # 2. Username with prefix/suffix
+                    # 3. Username in a list format
+                    
+                    # Replace any special chars or prefixes that might be in the username display
+                    username = line.strip()
+                    username = username.replace('•', '').strip()
+                    username = username.replace('-', '').strip()
+                    username = username.replace('*', '').strip()
+                    
+                    # If we have a player username that contains meaningful characters, add it
+                    if username and len(username) >= 3 and username != "Whitelisted":
                         usernames.append(username)
+                        print(f"Added username: '{username}'")
+                
+                # If no usernames were extracted, try a more aggressive approach
+                if not usernames:
+                    print("No usernames extracted with normal parsing, trying alternative method")
+                    # Join all text and try to extract usernames
+                    all_text = ' '.join(lines)
+                    words = all_text.split()
+                    for word in words:
+                        word = word.strip()
+                        # Remove special characters
+                        word = ''.join(c for c in word if c.isalnum() or c == '_')
+                        if word and len(word) >= 3 and word != "Whitelisted" and word != "Players":
+                            usernames.append(word)
+                            print(f"Added username with alternative method: '{word}'")
                 
                 # Create a detailed embed with user mappings
                 embed = discord.Embed(
                     title="Minecraft Whitelist",
                     description=f"Total whitelisted players: {len(usernames)}",
                     color=discord.Color.green()
+                )
+                
+                # Add original response for debugging in case parsing fails
+                embed.add_field(
+                    name="Debug: Original Response",
+                    value=f"```{rcon_response[:1000]}```",
+                    inline=False
                 )
                 
                 # Sort usernames alphabetically
@@ -612,8 +657,9 @@ class AdminCommands(commands.Cog):
                 unmapped_users = []
                 
                 for username in usernames:
-                    if username in user_mappings:
-                        discord_id = user_mappings[username]
+                    lower_username = username.lower()
+                    if lower_username in user_mappings:
+                        discord_id = user_mappings[lower_username]
                         mapped_users.append(f"• {username} - <@{discord_id}>")
                     else:
                         unmapped_users.append(f"• {username}")
