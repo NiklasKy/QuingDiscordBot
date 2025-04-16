@@ -340,6 +340,15 @@ class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
                 )
                 return
             
+            # Validate role name
+            allowed_roles = ["default", "sub", "vip", "VTuber"]
+            if requested_role not in allowed_roles:
+                await interaction.response.send_message(
+                    f"Ungültige Rolle: **{requested_role}**. Erlaubte Rollen sind: {', '.join(allowed_roles)}",
+                    ephemeral=True
+                )
+                return
+            
             # Confirm to the user that the request has been received
             await interaction.response.send_message(
                 ROLE_REQUEST_SUCCESS.format(role=requested_role),
@@ -671,6 +680,12 @@ class AdminCommands(commands.Cog):
         
         # Acknowledge the command
         await interaction.response.defer(ephemeral=False)
+        
+        # Validate role name - only allow specific roles
+        allowed_roles = ["default", "sub", "vip", "VTuber"]
+        if role_name not in allowed_roles:
+            await interaction.followup.send(f"❌ Invalid role name: **{role_name}**. Allowed roles are: {', '.join(allowed_roles)}")
+            return
         
         # Format and execute the lpv command
         minecraft_command = f"lpv user {minecraft_username} Parent Set {role_name}"
@@ -1630,6 +1645,16 @@ class QuingCraftBot(commands.Bot):
         # Handle approval
         if payload.emoji.name == "✅":
             print(f"[ROLE] Processing approval for {requested_role} role for {minecraft_username}")
+            
+            # Validate that the requested role is allowed
+            allowed_roles = ["default", "sub", "vip", "VTuber"]
+            if requested_role not in allowed_roles:
+                await channel.send(f"❌ Cannot approve role request: **{requested_role}** is not an allowed role. Allowed roles are: {', '.join(allowed_roles)}")
+                # Remove the approval reaction
+                for reaction in message.reactions:
+                    if reaction.emoji == "✅":
+                        await reaction.remove(moderator)
+                return
             
             try:
                 # Add the role to the user in-game using lpv
