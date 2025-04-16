@@ -1114,6 +1114,9 @@ class QuingCraftBot(commands.Bot):
         print("Loading pending requests from database...")
         await self.load_pending_requests()
         
+        # Clean up whitelist channel before creating new messages
+        await self.clean_whitelist_channel()
+        
         await self.create_whitelist_message()
         await self.create_role_message()
         
@@ -1173,6 +1176,40 @@ class QuingCraftBot(commands.Bot):
             print(f"Error loading pending requests: {e}")
             traceback.print_exc()
     
+    async def clean_whitelist_channel(self) -> None:
+        """Delete all bot messages from the whitelist channel."""
+        try:
+            channel_id = int(os.getenv("WHITELIST_CHANNEL_ID"))
+            channel = self.get_channel(channel_id)
+            
+            if not channel:
+                print(f"Could not find whitelist channel with ID {channel_id}")
+                return
+                
+            print(f"Cleaning whitelist channel {channel.name}...")
+            
+            # Get the bot's user ID
+            bot_id = self.user.id
+            deleted_count = 0
+            
+            # Find and delete all messages from the bot
+            async for message in channel.history(limit=100):
+                if message.author.id == bot_id:
+                    try:
+                        await message.delete()
+                        deleted_count += 1
+                        # Add a small delay to avoid rate limiting
+                        await asyncio.sleep(0.5)
+                    except discord.errors.NotFound:
+                        pass
+                    except Exception as e:
+                        print(f"Error deleting message: {e}")
+            
+            print(f"Deleted {deleted_count} messages from whitelist channel.")
+        except Exception as e:
+            print(f"Error cleaning whitelist channel: {e}")
+            traceback.print_exc()
+
     # Keep only one event listener for on_message
     @commands.Cog.listener()
     async def on_message(self, message):
