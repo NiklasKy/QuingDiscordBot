@@ -1158,7 +1158,8 @@ class QuingCraftBot(commands.Bot):
                 self.pending_requests = {}
             
             # Create a mapping of discord_ids to request objects for easier lookup
-            requests_by_id = {request['discord_id']: request for request in pending_requests}
+            # Index 1 should be discord_id based on the database schema
+            requests_by_id = {request[1]: request for request in pending_requests}
             
             # Fetch up to 200 messages from the moderation channel to find relevant ones
             async for message in mod_channel.history(limit=200):
@@ -1180,14 +1181,16 @@ class QuingCraftBot(commands.Bot):
                             if discord_id in requests_by_id:
                                 request = requests_by_id[discord_id]
                                 # Store the request in memory with the message_id for future processing
-                                minecraft_username = request['minecraft_username']
-                                self.pending_requests[discord_id] = (message.id, minecraft_username)
+                                # Index 2 should be minecraft_username based on the database schema
+                                minecraft_username = request[2]
+                                self.pending_requests[discord_id] = message.id
                                 print(f"Associated request for {discord_id} with message {message.id}")
                                 
                                 # Remove from our mapping so we can track which ones weren't found
                                 requests_by_id.pop(discord_id, None)
                     except Exception as e:
                         print(f"Error processing embed in message {message.id}: {str(e)}")
+                        traceback.print_exc()
                     
             # Log any requests for which we couldn't find messages
             if requests_by_id:
@@ -1223,7 +1226,8 @@ class QuingCraftBot(commands.Bot):
                 self.role_requests = {}
             
             # Create a mapping of discord_ids to request objects for easier lookup
-            requests_by_id = {request['discord_id']: request for request in pending_role_requests}
+            # Index 1 should be discord_id based on the database schema
+            requests_by_id = {request[1]: request for request in pending_role_requests}
             
             # Count messages found by message_id and by searching
             found_by_id = 0
@@ -1231,18 +1235,20 @@ class QuingCraftBot(commands.Bot):
             
             # First, try to load requests directly from message IDs
             for discord_id, request in requests_by_id.copy().items():
-                if request['message_id']:
+                # Index 9 should be message_id based on the database schema
+                if request[9]:
                     try:
                         # Try to fetch the message directly by ID
-                        message = await mod_channel.fetch_message(request['message_id'])
-                        minecraft_username = request['minecraft_username']
-                        requested_role = request['requested_role']
+                        message = await mod_channel.fetch_message(request[9])
+                        # Index 2 should be minecraft_username, Index 3 should be requested_role
+                        minecraft_username = request[2]
+                        requested_role = request[3]
                         self.role_requests[discord_id] = (message.id, minecraft_username, requested_role)
                         found_by_id += 1
                         requests_by_id.pop(discord_id, None)
                         continue
                     except Exception as e:
-                        print(f"Could not find message by ID {request['message_id']} for role request {discord_id}: {str(e)}")
+                        print(f"Could not find message by ID {request[9]} for role request {discord_id}: {str(e)}")
             
             # For any remaining requests, search through recent messages
             if requests_by_id:
@@ -1265,8 +1271,9 @@ class QuingCraftBot(commands.Bot):
                                 if discord_id in requests_by_id:
                                     request = requests_by_id[discord_id]
                                     # Store the request in memory with the message_id for future processing
-                                    minecraft_username = request['minecraft_username']
-                                    requested_role = request['requested_role']
+                                    # Index 2 should be minecraft_username, Index 3 should be requested_role
+                                    minecraft_username = request[2]
+                                    requested_role = request[3]
                                     self.role_requests[discord_id] = (message.id, minecraft_username, requested_role)
                                     found_by_search += 1
                                     
@@ -1277,6 +1284,7 @@ class QuingCraftBot(commands.Bot):
                                     requests_by_id.pop(discord_id, None)
                         except Exception as e:
                             print(f"Error processing embed in message {message.id} for role requests: {str(e)}")
+                            traceback.print_exc()
             
             # Log any requests for which we couldn't find messages
             if requests_by_id:
