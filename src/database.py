@@ -485,4 +485,20 @@ class Database:
         except Exception as e:
             print(f"Database error in update_role_request_message_id: {e}")
             self.conn.rollback()
-            return False 
+            return False
+    
+    def get_whitelist_users(self) -> List[tuple]:
+        """Get all approved whitelist users with their Discord IDs."""
+        try:
+            with self.conn.cursor() as cur:
+                cur.execute("""
+                    SELECT minecraft_username, discord_id 
+                    FROM whitelist_requests
+                    WHERE status = 'approved'
+                    ORDER BY minecraft_username
+                """)
+                return cur.fetchall()
+        except Exception as e:
+            print(f"Database error in get_whitelist_users: {e}")
+            self.conn.rollback()
+            return [] 

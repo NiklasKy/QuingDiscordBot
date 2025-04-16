@@ -574,18 +574,89 @@ class AdminCommands(commands.Cog):
         # Acknowledge the command received before long-running operations
         await interaction.response.defer(ephemeral=False)
         
-        # Get the whitelist directly via RCON
         try:
-            response = await self.bot.rcon.execute_command("vpw list")
+            # Get the whitelist directly via RCON
+            rcon_response = await self.bot.rcon.execute_command("vpw list")
+            
+            # Get user mappings from database
+            whitelist_users = self.bot.db.get_whitelist_users()
+            user_mappings = {mc_username: discord_id for mc_username, discord_id in whitelist_users}
             
             # Format and send the response
-            if response and "Error:" not in response:
-                formatted_response = f"**Current Whitelist:**\n```\n{response}\n```"
-                await interaction.followup.send(formatted_response)
+            if rcon_response and "Error:" not in rcon_response:
+                # Process the response to extract usernames
+                lines = rcon_response.strip().split('\n')
+                usernames = []
+                
+                # Parse the usernames from the response
+                for line in lines:
+                    if line.strip():
+                        # Handle different response formats
+                        parts = line.split()
+                        # Usually the format is a simple list of names
+                        username = parts[0] if parts else line.strip()
+                        usernames.append(username)
+                
+                # Create a detailed embed with user mappings
+                embed = discord.Embed(
+                    title="Minecraft Whitelist",
+                    description=f"Total whitelisted players: {len(usernames)}",
+                    color=discord.Color.green()
+                )
+                
+                # Sort usernames alphabetically
+                usernames.sort()
+                
+                # Group usernames with discord mapping in one field and without in another
+                mapped_users = []
+                unmapped_users = []
+                
+                for username in usernames:
+                    if username in user_mappings:
+                        discord_id = user_mappings[username]
+                        mapped_users.append(f"• {username} - <@{discord_id}>")
+                    else:
+                        unmapped_users.append(f"• {username}")
+                
+                # Add mapped users to embed
+                if mapped_users:
+                    embed.add_field(
+                        name="Players with Discord mapping",
+                        value="\n".join(mapped_users[:25]),  # Discord embed field limit
+                        inline=False
+                    )
+                    
+                    # Add additional fields if more than 25 users
+                    if len(mapped_users) > 25:
+                        chunks = [mapped_users[i:i+25] for i in range(25, len(mapped_users), 25)]
+                        for i, chunk in enumerate(chunks):
+                            embed.add_field(
+                                name=f"Players with Discord mapping (continued {i+1})",
+                                value="\n".join(chunk),
+                                inline=False
+                            )
+                
+                # Add unmapped users to embed
+                if unmapped_users:
+                    # Split into chunks of 25 for embed field limits
+                    chunks = [unmapped_users[i:i+25] for i in range(0, len(unmapped_users), 25)]
+                    for i, chunk in enumerate(chunks):
+                        field_name = "Players without Discord mapping"
+                        if i > 0:
+                            field_name += f" (continued {i+1})"
+                        embed.add_field(
+                            name=field_name,
+                            value="\n".join(chunk),
+                            inline=False
+                        )
+                
+                # Send the embed
+                await interaction.followup.send(embed=embed)
             else:
-                await interaction.followup.send(f"Failed to retrieve whitelist: {response}")
+                await interaction.followup.send(f"Failed to retrieve whitelist: {rcon_response}")
         except Exception as e:
             print(f"Error in whitelist_show: {str(e)}")
+            traceback.print_exc()
             await interaction.followup.send(f"An error occurred while retrieving the whitelist: {str(e)}")
 
     async def roles_update(self, interaction: discord.Interaction, minecraft_username: str, discord_user: discord.Member = None):
