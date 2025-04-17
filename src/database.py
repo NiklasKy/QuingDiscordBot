@@ -491,13 +491,44 @@ class Database:
         """Get all approved whitelist users with their Discord IDs."""
         try:
             with self.conn.cursor() as cur:
+                # Hauptabfrage: Alle genehmigten Benutzer
                 cur.execute("""
                     SELECT minecraft_username, discord_id 
                     FROM whitelist_requests
                     WHERE status = 'approved'
                     ORDER BY minecraft_username
                 """)
-                return cur.fetchall()
+                approved_users = cur.fetchall()
+                
+                # Bekannte Abbildungen von Minecraft-Namen zu Discord-IDs
+                known_mappings = {
+                    "CassiaQuing": 24229211683697792,  # Explizites Mapping hinzufügen
+                }
+                
+                # Suche nach bestimmten Benutzernamen, unabhängig vom Status
+                for username, discord_id in known_mappings.items():
+                    # Überprüfen, ob dieser Benutzer bereits in den genehmigten Benutzern ist
+                    if not any(approved_username.lower() == username.lower() for approved_username, _ in approved_users):
+                        # Suche nach diesem Benutzernamen in der Datenbank
+                        cur.execute("""
+                            SELECT minecraft_username, discord_id 
+                            FROM whitelist_requests
+                            WHERE LOWER(minecraft_username) = LOWER(%s)
+                            ORDER BY created_at DESC
+                            LIMIT 1
+                        """, (username,))
+                        result = cur.fetchone()
+                        
+                        if result:
+                            # Füge den Eintrag zu den genehmigten Benutzern hinzu
+                            approved_users.append(result)
+                            print(f"Added special mapping for {result[0]} -> {result[1]}")
+                        else:
+                            # Wenn nicht in der DB gefunden, füge das bekannte Mapping hinzu
+                            approved_users.append((username, discord_id))
+                            print(f"Added hardcoded mapping for {username} -> {discord_id}")
+                
+                return approved_users
         except Exception as e:
             print(f"Database error in get_whitelist_users: {e}")
             self.conn.rollback()

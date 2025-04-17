@@ -478,13 +478,31 @@ class AdminCommands(commands.Cog):
         self.whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=self.qc_group)
         self.roles_group = app_commands.Group(name="roles", description="Role management commands", parent=self.qc_group)
         
-        # Register the whitelist commands
-        self.whitelist_group.add_command(app_commands.Command(
+        # Register the whitelist commands with proper parameters
+        add_command = app_commands.Command(
             name="add",
-            description="Add a player to the whitelist",
+            description="Add a player to the whitelist and link to a Discord user",
             callback=self.whitelist_add,
             extras={"requires_staff": True}
-        ))
+        )
+        # Add parameters
+        add_command.parameters.append(
+            app_commands.AppCommandOption(
+                name="username",
+                description="Minecraft username to add to the whitelist",
+                type=app_commands.AppCommandOptionType.string,
+                required=True
+            )
+        )
+        add_command.parameters.append(
+            app_commands.AppCommandOption(
+                name="discord_user",
+                description="Discord user to link with the Minecraft account (default: command issuer)",
+                type=app_commands.AppCommandOptionType.user,
+                required=False
+            )
+        )
+        self.whitelist_group.add_command(add_command)
         
         self.whitelist_group.add_command(app_commands.Command(
             name="remove",
@@ -526,7 +544,7 @@ class AdminCommands(commands.Cog):
         # Add the groups to the bot
         bot.tree.add_command(self.qc_group)
     
-    async def whitelist_add(self, interaction: discord.Interaction, username: str):
+    async def whitelist_add(self, interaction: discord.Interaction, username: str, discord_user: Optional[discord.Member] = None):
         """Add a player to the whitelist."""
         # Check if user has staff role
         if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
@@ -536,12 +554,54 @@ class AdminCommands(commands.Cog):
         # Acknowledge the command received before long-running operations
         await interaction.response.defer(ephemeral=False)
         
+        # Get the target Discord user ID
+        target_discord_id = None
+        if discord_user:
+            target_discord_id = discord_user.id
+            target_user_mention = discord_user.mention
+        else:
+            # If no Discord user provided, use the command issuer
+            target_discord_id = interaction.user.id
+            target_user_mention = interaction.user.mention
+        
         # Use the more robust whitelist_add method from the RCON handler
         result = await self.bot.rcon.whitelist_add(username)
         
+        if result:
+            # If successfully added to whitelist, add an entry to the database
+            try:
+                # Create a whitelist entry in the database with approved status
+                entry_added = self.bot.db.add_whitelist_request(
+                    discord_id=target_discord_id,
+                    minecraft_username=username,
+                    reason=f"Manually added by {interaction.user.name}",
+                    message_id=None
+                )
+                
+                # Update the status to approved
+                # Get the request ID from newly added request
+                request = self.bot.db.get_pending_request(target_discord_id)
+                if request:
+                    request_id = request[0]
+                    self.bot.db.update_request_status(
+                        request_id=request_id,
+                        status="approved",
+                        moderator_id=interaction.user.id
+                    )
+                    print(f"Added database entry for {username} linked to Discord ID {target_discord_id}")
+                
+                # Add the whitelist role to the target user
+                await self.bot.add_whitelist_role(target_discord_id)
+                print(f"Added whitelist role to user with Discord ID {target_discord_id} for Minecraft username {username}")
+            except Exception as e:
+                print(f"Error adding database entry or whitelist role: {str(e)}")
+                traceback.print_exc()
+        
         # Send the result back to the user - public for everyone to see
         if result:
-            await interaction.followup.send(WHITELIST_ADD_SUCCESS.format(username=username))
+            await interaction.followup.send(
+                f"{WHITELIST_ADD_SUCCESS.format(username=username)}\nWhitelisted account linked to {target_user_mention}."
+            )
         else:
             await interaction.followup.send(f"Failed to add {username} to the whitelist. Check the logs for details.")
     
@@ -554,6 +614,26 @@ class AdminCommands(commands.Cog):
         
         # Acknowledge the command received before long-running operations
         await interaction.response.defer(ephemeral=False)
+        
+        # Before removing from whitelist, try to find the Discord user by the Minecraft username
+        # to remove their role
+        user_entry = None
+        try:
+            # Get all whitelist entries and find one with matching username
+            whitelist_users = self.bot.db.get_whitelist_users()
+            for mc_username, discord_id in whitelist_users:
+                if mc_username.lower() == username.lower():
+                    user_entry = (mc_username, discord_id)
+                    break
+            
+            # If found, remove the whitelist role
+            if user_entry:
+                discord_id = user_entry[1]
+                await self.bot.remove_whitelist_role(discord_id)
+                print(f"Removed whitelist role from user with Discord ID {discord_id} for Minecraft username {username}")
+        except Exception as e:
+            print(f"Error removing whitelist role: {str(e)}")
+            traceback.print_exc()
         
         # Use the more robust whitelist_remove method from the RCON handler
         result = await self.bot.rcon.whitelist_remove(username)
@@ -1072,6 +1152,128 @@ class QuingCraftBot(commands.Bot):
             print(f"User {user.id} has no applicable roles")
         
         return success_count > 0
+
+    async def add_whitelist_role(self, user_id: int) -> bool:
+        """
+        Add the Whitelist role to a Discord user.
+        
+        Args:
+            user_id: Discord user ID
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get the whitelist role ID from environment variable
+            whitelist_role_id = os.getenv("WHITELIST_ROLE_ID")
+            if not whitelist_role_id:
+                print("WHITELIST_ROLE_ID environment variable not set")
+                return False
+            
+            whitelist_role_id = int(whitelist_role_id)
+            
+            # Get the guild
+            guild_id = os.getenv("DISCORD_GUILD_ID")
+            if not guild_id:
+                print("DISCORD_GUILD_ID environment variable not set")
+                return False
+            
+            guild = self.get_guild(int(guild_id))
+            if not guild:
+                print(f"Could not find guild with ID {guild_id}")
+                return False
+            
+            # Get the member
+            member = guild.get_member(user_id)
+            if not member:
+                try:
+                    # Try fetching the member if not in cache
+                    member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    print(f"Member with ID {user_id} not found in guild")
+                    return False
+            
+            # Get the role
+            whitelist_role = guild.get_role(whitelist_role_id)
+            if not whitelist_role:
+                print(f"Could not find Whitelist role with ID {whitelist_role_id}")
+                return False
+            
+            # Check if user already has the role
+            if whitelist_role in member.roles:
+                print(f"User {member.name} already has the Whitelist role")
+                return True
+            
+            # Add the role
+            await member.add_roles(whitelist_role, reason="Added to Minecraft whitelist")
+            print(f"Added Whitelist role to user {member.name}")
+            return True
+            
+        except Exception as e:
+            print(f"Error adding Whitelist role: {str(e)}")
+            traceback.print_exc()
+            return False
+    
+    async def remove_whitelist_role(self, user_id: int) -> bool:
+        """
+        Remove the Whitelist role from a Discord user.
+        
+        Args:
+            user_id: Discord user ID
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Get the whitelist role ID from environment variable
+            whitelist_role_id = os.getenv("WHITELIST_ROLE_ID")
+            if not whitelist_role_id:
+                print("WHITELIST_ROLE_ID environment variable not set")
+                return False
+            
+            whitelist_role_id = int(whitelist_role_id)
+            
+            # Get the guild
+            guild_id = os.getenv("DISCORD_GUILD_ID")
+            if not guild_id:
+                print("DISCORD_GUILD_ID environment variable not set")
+                return False
+            
+            guild = self.get_guild(int(guild_id))
+            if not guild:
+                print(f"Could not find guild with ID {guild_id}")
+                return False
+            
+            # Get the member
+            member = guild.get_member(user_id)
+            if not member:
+                try:
+                    # Try fetching the member if not in cache
+                    member = await guild.fetch_member(user_id)
+                except discord.NotFound:
+                    print(f"Member with ID {user_id} not found in guild")
+                    return False
+            
+            # Get the role
+            whitelist_role = guild.get_role(whitelist_role_id)
+            if not whitelist_role:
+                print(f"Could not find Whitelist role with ID {whitelist_role_id}")
+                return False
+            
+            # Check if user has the role
+            if whitelist_role not in member.roles:
+                print(f"User {member.name} does not have the Whitelist role")
+                return True
+            
+            # Remove the role
+            await member.remove_roles(whitelist_role, reason="Removed from Minecraft whitelist")
+            print(f"Removed Whitelist role from user {member.name}")
+            return True
+            
+        except Exception as e:
+            print(f"Error removing Whitelist role: {str(e)}")
+            traceback.print_exc()
+            return False
     
     async def setup_hook(self) -> None:
         """Set up the bot's commands and sync them."""
@@ -1537,7 +1739,7 @@ class QuingCraftBot(commands.Bot):
         
         try:
             message_id = int(parts[1])
-            await message.channel.send(f"Checking reactions on message {message_id}...")
+            await message.channel.send(DEBUG_CHECKING_REACTIONS.format(message_id=message_id))
             await self.check_reactions(message_id)
         except ValueError:
             await message.channel.send("Invalid message ID. Please provide a valid number.")
@@ -1657,6 +1859,9 @@ class QuingCraftBot(commands.Bot):
                 db_success = self.db.update_request_status(request_id, "approved", moderator_id)
                 print(f"DEBUG: Database update result: {db_success}")
                 
+                # Add Discord whitelist role to the user
+                await self.add_whitelist_role(user_id)
+                
                 # Remove from pending requests
                 if user_id in self.pending_requests:
                     del self.pending_requests[user_id]
@@ -1699,6 +1904,9 @@ class QuingCraftBot(commands.Bot):
             # Update the request status with the moderator ID
             db_success = self.db.update_request_status(request_id, "rejected", moderator_id)
             print(f"DEBUG: Database update result: {db_success}")
+            
+            # Remove Discord whitelist role if it exists
+            await self.remove_whitelist_role(user_id)
             
             # Remove from pending requests
             if user_id in self.pending_requests:
