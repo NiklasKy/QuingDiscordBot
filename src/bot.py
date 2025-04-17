@@ -13,6 +13,7 @@ from typing import Optional, Literal, Dict, Any
 from dotenv import load_dotenv
 import datetime
 import re
+import time
 
 from .database import Database
 from .rcon import RconHandler
@@ -62,7 +63,9 @@ from .texts import (
     ROLE_SELECTOR_SUB_TITLE,
     ROLE_SELECTOR_SUB_DESCRIPTION,
     ROLE_SELECTOR_REQUEST_TITLE,
-    ROLE_SELECTOR_REQUEST_DESCRIPTION
+    ROLE_SELECTOR_REQUEST_DESCRIPTION,
+    WHITELIST_APPROVED_DM,
+    WHITELIST_DENIED_DM
 )
 
 load_dotenv()
@@ -543,8 +546,8 @@ class AdminCommands(commands.Cog):
     
     async def whitelist_add(self, interaction: discord.Interaction, username: str, discord_user: Optional[discord.Member] = None):
         """Add a player to the whitelist."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -613,8 +616,8 @@ class AdminCommands(commands.Cog):
     
     async def whitelist_remove(self, interaction: discord.Interaction, username: str):
         """Remove a player from the whitelist."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -661,8 +664,8 @@ class AdminCommands(commands.Cog):
     
     async def whitelist_show(self, interaction: discord.Interaction):
         """Show all players on the whitelist."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -797,8 +800,8 @@ class AdminCommands(commands.Cog):
 
     async def roles_update(self, interaction: discord.Interaction, minecraft_username: str, discord_user: discord.Member = None):
         """Update a player's roles based on their Discord roles."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -819,8 +822,8 @@ class AdminCommands(commands.Cog):
     
     async def roles_check(self, interaction: discord.Interaction, discord_user: discord.Member = None):
         """Check a user's current Discord roles and mapped Minecraft roles."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -880,8 +883,8 @@ class AdminCommands(commands.Cog):
 
     async def role_set(self, interaction: discord.Interaction, minecraft_username: str, role_name: str):
         """Directly set a specific role for a Minecraft player."""
-        # Check if user has staff role
-        if not any(role.id in self.bot.staff_roles for role in interaction.user.roles):
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
             await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
             return
         
@@ -894,21 +897,135 @@ class AdminCommands(commands.Cog):
             await interaction.followup.send(f"❌ Invalid role name: **{role_name}**. Allowed roles are: {', '.join(allowed_roles)}")
             return
         
-        # Format and execute the lpv command
-        minecraft_command = f"lpv user {minecraft_username} Parent Set {role_name}"
-        
+        # Execute RCON command to set the role directly
         try:
-            # Execute the command
-            response = await self.bot.rcon.execute_command(minecraft_command)
+            command = f"lpv user {minecraft_username} parent set {role_name}"
+            result = await self.bot.rcon.execute_command(command)
             
             # Check if the command was successful
-            if "error" not in response.lower() and "unknown command" not in response.lower():
-                await interaction.followup.send(f"✅ Successfully set role **{role_name}** for player **{minecraft_username}**.")
+            if "error" in result.lower():
+                await interaction.followup.send(f"❌ Failed to set role for **{minecraft_username}**: {result}")
             else:
-                await interaction.followup.send(f"❌ Failed to set role. Server response: ```{response}```")
+                await interaction.followup.send(f"✅ Successfully set role **{role_name}** for player **{minecraft_username}**")
         except Exception as e:
-            print(f"Error setting role: {str(e)}")
-            await interaction.followup.send(f"❌ An error occurred while setting the role: {str(e)}")
+            print(f"Error in role_set: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error setting role: {str(e)}")
+    
+    async def role_mapping_add(self, interaction: discord.Interaction, discord_role_id: str, minecraft_role: str):
+        """Add a mapping between a Discord role and a Minecraft permission role."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Convert role ID to int
+        try:
+            discord_role_id = int(discord_role_id)
+        except ValueError:
+            await interaction.response.send_message("Invalid Discord role ID - must be a number", ephemeral=True)
+            return
+        
+        # Check if the role exists in the server
+        role = interaction.guild.get_role(discord_role_id)
+        if not role:
+            await interaction.response.send_message(f"Role with ID {discord_role_id} not found in this server", ephemeral=True)
+            return
+        
+        # Sanitize the Minecraft role name
+        minecraft_role = minecraft_role.strip()
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Add the mapping
+        try:
+            self.bot.role_mappings[discord_role_id] = minecraft_role
+            self.bot.save_config()
+            await interaction.followup.send(f"✅ Added role mapping: Discord role **{role.name}** → Minecraft group **{minecraft_role}**")
+        except Exception as e:
+            print(f"Error adding role mapping: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error adding role mapping: {str(e)}")
+    
+    async def role_mapping_remove(self, interaction: discord.Interaction, discord_role_id: str):
+        """Remove a Discord to Minecraft role mapping."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Convert role ID to int
+        try:
+            discord_role_id = int(discord_role_id)
+        except ValueError:
+            await interaction.response.send_message("Invalid Discord role ID - must be a number", ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Remove the mapping
+        try:
+            if discord_role_id in self.bot.role_mappings:
+                minecraft_role = self.bot.role_mappings[discord_role_id]
+                del self.bot.role_mappings[discord_role_id]
+                self.bot.save_config()
+                
+                # Try to get the role name for better feedback
+                role = interaction.guild.get_role(discord_role_id)
+                role_name = role.name if role else f"ID:{discord_role_id}"
+                
+                await interaction.followup.send(f"✅ Removed role mapping: Discord role **{role_name}** → Minecraft group **{minecraft_role}**")
+            else:
+                await interaction.followup.send(f"❌ No mapping found for Discord role ID {discord_role_id}")
+        except Exception as e:
+            print(f"Error removing role mapping: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error removing role mapping: {str(e)}")
+    
+    async def role_mappings_show(self, interaction: discord.Interaction):
+        """Show all Discord to Minecraft role mappings."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=False)
+        
+        # Create an embed to display role mappings
+        embed = discord.Embed(
+            title="Discord to Minecraft Role Mappings",
+            description="These mappings determine which Minecraft permissions are assigned based on Discord roles",
+            color=discord.Color.blue()
+        )
+        
+        # Get all mappings
+        mappings = []
+        for discord_role_id, minecraft_role in self.bot.role_mappings.items():
+            # Try to get the role name
+            role = interaction.guild.get_role(discord_role_id)
+            role_name = role.name if role else f"Unknown Role (ID: {discord_role_id})"
+            
+            # Add to the list
+            mappings.append(f"• **{role_name}** → `{minecraft_role}`")
+        
+        # Add mappings to the embed
+        if mappings:
+            embed.add_field(
+                name="Current Mappings",
+                value="\n".join(mappings),
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="Current Mappings",
+                value="No mappings configured",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed)
 
 class DebugCommands(commands.Cog):
     """Debug commands for the QuingCraft bot."""
@@ -979,11 +1096,34 @@ class QuingCraftBot(commands.Bot):
         self.whitelist_message_id = None
         self.role_message_id = None
         
-        # Staff role IDs
-        self.staff_roles = [
-            int(os.getenv("ADMIN_ROLE_ID", "0")),
-            int(os.getenv("MOD_ROLE_ID", "0"))
-        ]
+        # Admin user IDs - these users always have full access
+        admin_ids_str = os.getenv("ADMIN_USER_IDS", "")
+        self.admin_user_ids = []
+        if admin_ids_str:
+            try:
+                # Parse comma-separated list of user IDs
+                self.admin_user_ids = [int(user_id.strip()) for user_id in admin_ids_str.split(",") if user_id.strip()]
+                print(f"Loaded admin user IDs: {self.admin_user_ids}")
+            except Exception as e:
+                print(f"Error parsing ADMIN_USER_IDS: {str(e)}")
+        
+        # Staff role IDs (support for multiple mod roles)
+        self.staff_roles = []
+        
+        # Add admin role ID if specified
+        admin_role_id = os.getenv("ADMIN_ROLE_ID", "0")
+        if admin_role_id and admin_role_id != "0":
+            self.staff_roles.append(int(admin_role_id))
+        
+        # Add mod role IDs (supports comma-separated list)
+        mod_roles_str = os.getenv("MOD_ROLE_ID", "0")
+        if mod_roles_str:
+            try:
+                mod_roles = [int(role_id.strip()) for role_id in mod_roles_str.split(",") if role_id.strip() and role_id != "0"]
+                self.staff_roles.extend(mod_roles)
+                print(f"Loaded staff role IDs: {self.staff_roles}")
+            except Exception as e:
+                print(f"Error parsing MOD_ROLE_ID: {str(e)}")
         
         # Role mappings from .env (Discord Role ID -> Minecraft Role)
         self.role_mappings = self._load_role_mappings()
@@ -1075,6 +1215,30 @@ class QuingCraftBot(commands.Bot):
         
         print(f"Role hierarchy: {hierarchy}")
         return hierarchy
+    
+    def has_staff_permissions(self, user: discord.User) -> bool:
+        """
+        Check if a user has staff permissions.
+        
+        The user has staff permissions if:
+        1. Their user ID is in the admin_user_ids list
+        2. They have at least one role that is in the staff_roles list
+        
+        Args:
+            user: The user to check
+            
+        Returns:
+            bool: True if the user has staff permissions, False otherwise
+        """
+        # Check if user is in admin_user_ids
+        if user.id in self.admin_user_ids:
+            return True
+        
+        # Check if user has any staff roles
+        if isinstance(user, discord.Member):
+            return any(role.id in self.staff_roles for role in user.roles)
+        
+        return False
     
     async def update_minecraft_roles(self, user: discord.User, minecraft_username: str, twitch_username: str = None) -> bool:
         """
@@ -1323,50 +1487,27 @@ class QuingCraftBot(commands.Bot):
             traceback.print_exc()
             return False
     
-    async def setup_hook(self) -> None:
-        """Setup hook to register commands and cogs."""
+    async def setup_hook(self):
+        """Set up the bot hooks."""
+        print("Setting up hooks...")
+        start_time = time.time()
+        
+        # Register the commands
+        print("Registering slash commands...")
+        
+        # Add all cogs
         await self.add_cog(AdminCommands(self))
-        await self.add_cog(DebugCommands(self))
+        await self.add_cog(ElevatorCommands(self))
+        await self.add_cog(MinecraftCommands(self))
+        await self.add_cog(WhitelistCommands(self))
+        await self.add_cog(RequestCommands(self))
         
-        try:
-            # Register global commands and sync them
-            commands_synced = await self.tree.sync()
-            print(f"Synced {len(commands_synced)} commands")
-        except Exception as e:
-            print(f"Error syncing commands: {e}")
-            traceback.print_exc()
+        # Register the commands with Discord
+        await self.tree.sync()
         
-        @self.event
-        async def on_command_error(ctx, error):
-            """Default command error handler."""
-            if isinstance(error, commands.MissingRequiredArgument):
-                await ctx.send(f"Missing required argument: {error.param}")
-            elif isinstance(error, commands.CommandNotFound):
-                return
-            elif isinstance(error, commands.CheckFailure):
-                await ctx.send(ERROR_PERMISSION_DENIED)
-            elif isinstance(error, commands.MissingPermissions):
-                await ctx.send(ERROR_PERMISSION_DENIED)
-            else:
-                print(f"Unhandled command error: {error}")
-                traceback.print_exc()
-                await ctx.send(ERROR_GENERIC)
-        
-        # Verify sync results
-        print("Registered commands:")
-        for command in self.tree.get_commands():
-            print(f"/{command.name} - {command.description}")
-        
-        # Check global commands - but don't sync again
-        global_commands = await self.tree.fetch_commands()
-        print(f"Found {len(global_commands)} global commands")
-        for command in global_commands:
-            print(f"/{command.name} - {command.description}")
-        
-        # Schedule background task to cleanup old messages
-        self.bg_task = self.loop.create_task(self.whitelist_command_cleanup())
-        
-        print("Bot setup complete")
+        # Print the completion time
+        end_time = time.time()
+        print(f"Setup complete in {end_time - start_time:.2f} seconds!")
     
     async def whitelist_command_cleanup(self) -> None:
         """Clean up duplicate slash commands and re-add them."""
@@ -2121,6 +2262,282 @@ class QuingCraftBot(commands.Bot):
         await self.create_role_message()
         
         await message.channel.send("Messages recreated successfully!")
+
+class RequestCommands(commands.Cog):
+    """Commands for managing whitelist requests."""
+    
+    def __init__(self, bot):
+        self.bot = bot
+    
+    @app_commands.command(name="list_requests", description="List all pending whitelist requests")
+    async def list_requests(self, interaction: discord.Interaction, status: str = "pending"):
+        """List all whitelist requests with the given status."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=True)
+        
+        try:
+            # Get requests with the specified status
+            requests = self.bot.db.get_requests_by_status(status)
+            
+            if not requests:
+                await interaction.followup.send(f"No whitelist requests with status '{status}' found.", ephemeral=True)
+                return
+            
+            # Create an embed to display the requests
+            embed = discord.Embed(
+                title=f"Whitelist Requests ({status.capitalize()})",
+                description=f"Found {len(requests)} requests with status '{status}'",
+                color=discord.Color.blue()
+            )
+            
+            # Add each request to the embed
+            for request in requests:
+                request_id = request[0]
+                discord_id = request[1]
+                minecraft_username = request[2]
+                created_at = request[5] if len(request) > 5 else "Unknown"
+                processed_at = request[6] if len(request) > 6 and request[6] else "Not processed yet"
+                
+                # Try to get the Discord username
+                discord_user = None
+                try:
+                    discord_user = await self.bot.fetch_user(discord_id)
+                except:
+                    pass
+                
+                discord_name = f"{discord_user.name} ({discord_id})" if discord_user else f"Unknown User ({discord_id})"
+                
+                embed.add_field(
+                    name=f"Request #{request_id} - {minecraft_username}",
+                    value=f"**Discord:** {discord_name}\n"
+                          f"**Created:** {created_at}\n"
+                          f"**Processed:** {processed_at}\n"
+                          f"**Actions:** `/approve_user {request_id}` | `/deny_user {request_id}`",
+                    inline=False
+                )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            print(f"Error listing requests: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error listing requests: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="approve_user", description="Approve a pending whitelist request")
+    async def approve_user(self, interaction: discord.Interaction, request_id: int):
+        """Approve a pending whitelist request."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=True)
+        
+        # Attempt to approve the request
+        try:
+            request = self.bot.db.get_request_by_id(request_id)
+            if not request:
+                await interaction.followup.send(f"❌ No request found with ID {request_id}", ephemeral=True)
+                return
+            
+            # Extract request details
+            request_discord_id = request[1]
+            minecraft_username = request[2]
+            current_status = request[4]
+            
+            # Check if the request is already approved
+            if current_status == "approved":
+                await interaction.followup.send(f"❌ Request ID {request_id} for player {minecraft_username} is already approved", ephemeral=True)
+                return
+            
+            # Update the request status
+            self.bot.db.update_request_status(
+                request_id=request_id,
+                status="approved",
+                moderator_id=interaction.user.id
+            )
+            
+            # Add the user to the whitelist
+            whitelist_success = await self.bot.rcon.whitelist_add(minecraft_username)
+            
+            # Add the whitelist role to the user
+            role_success = await self.bot.add_whitelist_role(request_discord_id)
+            
+            # Get the target user object if possible
+            target_user = None
+            try:
+                target_user = await self.bot.fetch_user(request_discord_id)
+            except:
+                pass
+            
+            # Report success
+            success_message = f"✅ Approved whitelist request for **{minecraft_username}**"
+            if target_user:
+                success_message += f" ({target_user.mention})"
+            
+            if whitelist_success:
+                success_message += "\n✅ Added to server whitelist"
+            else:
+                success_message += "\n❌ Failed to add to server whitelist (check logs)"
+            
+            if role_success:
+                success_message += "\n✅ Added whitelist role in Discord"
+            else:
+                success_message += "\n❌ Failed to add whitelist role (check logs)"
+            
+            await interaction.followup.send(success_message, ephemeral=True)
+            
+            # Try to send a DM to the user
+            if target_user:
+                try:
+                    await target_user.send(WHITELIST_APPROVED_DM.format(username=minecraft_username))
+                except:
+                    print(f"Failed to send DM to user {request_discord_id} about whitelist approval")
+            
+            # Update the original request message if available
+            message_id = request[3]
+            if message_id:
+                try:
+                    channel = self.bot.get_channel(self.bot.WHITELIST_REQUESTS_CHANNEL_ID)
+                    if channel:
+                        try:
+                            # Attempt to get the original message
+                            message = await channel.fetch_message(message_id)
+                            
+                            # Create an updated embed
+                            embed = message.embeds[0]
+                            embed.color = discord.Color.green()
+                            
+                            # Add a field showing who approved it
+                            embed.add_field(
+                                name="Status",
+                                value=f"✅ Approved by {interaction.user.mention}",
+                                inline=False
+                            )
+                            
+                            # Update the message
+                            await message.edit(embed=embed)
+                            
+                            # Disable buttons if they exist
+                            if message.components:
+                                await message.edit(view=None)
+                        except discord.NotFound:
+                            print(f"Could not find request message {message_id} to update")
+                        except Exception as e:
+                            print(f"Error updating request message: {str(e)}")
+                except Exception as e:
+                    print(f"Error processing request message update: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error approving request: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error approving request: {str(e)}", ephemeral=True)
+    
+    @app_commands.command(name="deny_user", description="Deny a pending whitelist request")
+    async def deny_user(self, interaction: discord.Interaction, request_id: int, reason: str = "No reason provided"):
+        """Deny a pending whitelist request."""
+        # Check if user has staff permission
+        if not self.bot.has_staff_permissions(interaction.user):
+            await interaction.response.send_message(ERROR_PERMISSION_DENIED, ephemeral=True)
+            return
+        
+        # Acknowledge the command
+        await interaction.response.defer(ephemeral=True)
+        
+        # Attempt to deny the request
+        try:
+            request = self.bot.db.get_request_by_id(request_id)
+            if not request:
+                await interaction.followup.send(f"❌ No request found with ID {request_id}", ephemeral=True)
+                return
+            
+            # Extract request details
+            request_discord_id = request[1]
+            minecraft_username = request[2]
+            current_status = request[4]
+            
+            # Check if the request is already processed
+            if current_status != "pending":
+                await interaction.followup.send(f"❌ Request ID {request_id} is already processed (status: {current_status})", ephemeral=True)
+                return
+            
+            # Update the request status
+            self.bot.db.update_request_status(
+                request_id=request_id,
+                status="denied",
+                moderator_id=interaction.user.id,
+                notes=reason
+            )
+            
+            # Remove from whitelist if present
+            await self.bot.rcon.whitelist_remove(minecraft_username)
+            
+            # Get the target user object if possible
+            target_user = None
+            try:
+                target_user = await self.bot.fetch_user(request_discord_id)
+            except:
+                pass
+            
+            # Report success
+            success_message = f"✅ Denied whitelist request for **{minecraft_username}**"
+            if target_user:
+                success_message += f" ({target_user.mention})"
+            success_message += f"\nReason: {reason}"
+            
+            await interaction.followup.send(success_message, ephemeral=True)
+            
+            # Try to send a DM to the user
+            if target_user:
+                try:
+                    await target_user.send(WHITELIST_DENIED_DM.format(username=minecraft_username, reason=reason))
+                except:
+                    print(f"Failed to send DM to user {request_discord_id} about whitelist denial")
+            
+            # Update the original request message if available
+            message_id = request[3]
+            if message_id:
+                try:
+                    channel = self.bot.get_channel(self.bot.WHITELIST_REQUESTS_CHANNEL_ID)
+                    if channel:
+                        try:
+                            # Attempt to get the original message
+                            message = await channel.fetch_message(message_id)
+                            
+                            # Create an updated embed
+                            embed = message.embeds[0]
+                            embed.color = discord.Color.red()
+                            
+                            # Add a field showing who denied it and why
+                            embed.add_field(
+                                name="Status",
+                                value=f"❌ Denied by {interaction.user.mention}\nReason: {reason}",
+                                inline=False
+                            )
+                            
+                            # Update the message
+                            await message.edit(embed=embed)
+                            
+                            # Disable buttons if they exist
+                            if message.components:
+                                await message.edit(view=None)
+                        except discord.NotFound:
+                            print(f"Could not find request message {message_id} to update")
+                        except Exception as e:
+                            print(f"Error updating request message: {str(e)}")
+                except Exception as e:
+                    print(f"Error processing request message update: {str(e)}")
+        
+        except Exception as e:
+            print(f"Error denying request: {str(e)}")
+            traceback.print_exc()
+            await interaction.followup.send(f"❌ Error denying request: {str(e)}", ephemeral=True)
 
 def main() -> None:
     """Start the bot."""
