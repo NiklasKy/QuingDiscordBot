@@ -3,7 +3,7 @@ Text messages used by the QuingCraft Discord bot.
 """
 
 # Whitelist messages
-WHITELIST_TITLE = "QuingCraft Server Whitelist"
+WHITELIST_TITLE = "QuingCraft Server Whitelist 1.21.4"
 WHITELIST_DESCRIPTION = "Welcome to QuingCraft! To access our Minecraft server, you'll need to be added to our whitelist. Click the button below to submit your request. Please ensure you enter your correct Minecraft Java Edition username."
 WHITELIST_INVALID_NAME = "The Minecraft username you provided appears to be invalid. Please double-check the spelling and ensure you're using your Java Edition account name."
 WHITELIST_SUCCESS = "Your whitelist request has been successfully submitted! ✅\n\nA staff member will review it as soon as possible. You'll receive a notification once your request has been processed."
@@ -49,7 +49,7 @@ DEBUG_NO_PENDING_REQUESTS = "There are no pending whitelist requests."
 DEBUG_INVALID_MESSAGE_ID = "Invalid message ID. Please provide a valid number."
 
 # Role selector view texts
-ROLE_SELECTOR_TITLE = "Minecraft Role Manager 1.21.4"
+ROLE_SELECTOR_TITLE = "Minecraft Role Manager"
 ROLE_SELECTOR_DESCRIPTION = "Manage your in-game roles using the options below. Note: You must have joined the server at least once before you can request or receive any role."
 ROLE_SELECTOR_SUB_TITLE = "🌟 Subscriber Benefits"
 ROLE_SELECTOR_SUB_DESCRIPTION = "Twitch subscribers can claim the Subscriber role in-game for exclusive perks. Use the **Get Sub Role** button to link your accounts."
