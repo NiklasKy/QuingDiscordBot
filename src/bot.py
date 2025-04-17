@@ -775,18 +775,46 @@ class AdminCommands(commands.Cog):
                     username = username.replace('-', '').strip()
                     username = username.replace('*', '').strip()
                     
+                    # Extrahiere UUID aus der Zeile, falls vorhanden
+                    uuid_match = re.search(r'\((UUID:[^)]+)\)', username)
+                    uuid_info = ""
+                    if uuid_match:
+                        uuid_info = uuid_match.group(1)
+                        # Entferne UUID aus dem Benutzernamen
+                        username = re.sub(r'\s*\(UUID:[^)]+\)', '', username).strip()
+                    
                     if username and len(username) >= 3 and username != "Whitelisted":
-                        usernames.append(username)
+                        usernames.append((username, uuid_info))
+                        print(f"DEBUG: Extracted username from RCON: '{username}' with info: '{uuid_info}'")
+                
+                # Debug-Informationen zu den extrahierten Benutzernamen
+                print(f"DEBUG: Extracted {len(usernames)} usernames from RCON response")
                 
                 # If we extracted usernames, create a section for unmapped players (in RCON but not in DB)
                 if usernames:
                     # Find players in RCON that are not in our database
                     unmapped_users = []
-                    for username in usernames:
-                        # Konvertiere den Benutzernamen in Kleinbuchstaben für den Vergleich
-                        if username.lower() not in minecraft_usernames_lower:
-                            unmapped_users.append(f"• {username}")
-                            print(f"DEBUG: Found unmapped user: {username}")
+                    for username, uuid_info in usernames:
+                        # Prüfe sehr detailliert, ob der Benutzername in der Datenbank existiert
+                        username_found = False
+                        username_lower = username.lower()
+                        
+                        # Direkter Vergleich (case-insensitive)
+                        if username_lower in minecraft_usernames_lower:
+                            username_found = True
+                            print(f"DEBUG: Username '{username}' found in DB via direct comparison")
+                        
+                        # Wenn kein direkter Treffer, überprüfe ähnliche Namen mit Ähnlichkeitsprüfung
+                        if not username_found:
+                            # Zeige alle Namen in der Datenbank für Debugging-Zwecke
+                            print(f"DEBUG: Checking '{username_lower}' against DB names: {sorted(minecraft_usernames_lower)}")
+                            
+                            # Falls der Name nicht gefunden wurde, füge ihn zu den unmapped_users hinzu
+                            unmapped_info = f"• {username}"
+                            if uuid_info:
+                                unmapped_info += f" ({uuid_info})"
+                            unmapped_users.append(unmapped_info)
+                            print(f"DEBUG: Adding unmapped user: '{unmapped_info}'")
                     
                     # Only show this field if there are actually unmapped users
                     if unmapped_users:
@@ -797,12 +825,12 @@ class AdminCommands(commands.Cog):
                         )
                 
                 # Add original RCON response for debugging
-                # Only include for debugging purposes
-                debug_mode = False  # Set to True when troubleshooting
+                # Temporarily enable debug mode to help identify the issue
+                debug_mode = True  # Temporarily set to True
                 if debug_mode:
                     embed.add_field(
                         name="Debug: RCON Response",
-                        value=f"```{rcon_response[:500]}```",
+                        value=f"```{rcon_response[:1000]}```",
                         inline=False
                     )
             
