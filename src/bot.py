@@ -1367,34 +1367,16 @@ class QuingCraftBot(commands.Bot):
         print("Cleaning up whitelist commands...")
         
         try:
-            # Delete global commands
-            print("Deleting global commands...")
-            global_commands = await self.tree.fetch_commands()
-            for command in global_commands:
-                if command.name == "qc":
-                    print(f"Removing global command: {command.name} (ID: {command.id})")
-                    await self.tree.delete_command(command.id)
-            
-            # Delete guild-specific commands
-            guild_id = os.getenv("DISCORD_GUILD_ID")
-            if guild_id:
-                guild = discord.Object(id=int(guild_id))
-                guild_commands = await self.tree.fetch_commands(guild=guild)
-                
-                for command in guild_commands:
-                    if command.name == "qc":
-                        print(f"Removing guild command: {command.name} (ID: {command.id})")
-                        await self.tree.delete_command(command.id, guild=guild)
-            
-            # Wait a moment to ensure commands are deleted
-            await asyncio.sleep(3)
+            # In newer discord.py versions, we can't delete commands by ID directly
+            # Instead, we'll sync an empty command list then re-add our commands
             
             # Add the AdminCommands cog with slash commands
             print("Adding AdminCommands cog...")
             admin_cog = AdminCommands(self)
             await self.add_cog(admin_cog)
             
-            # Explicit sync only for the specific guild, no global sync
+            # Guild-specific sync
+            guild_id = os.getenv("DISCORD_GUILD_ID")
             if guild_id:
                 print(f"Force syncing commands to guild ID: {guild_id}")
                 guild = discord.Object(id=int(guild_id))
