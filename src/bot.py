@@ -473,6 +473,15 @@ class AdminCommands(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        
+        # Check if the command is already registered to avoid duplicates
+        existing_commands = {cmd.name: cmd for cmd in bot.tree.get_commands()}
+        if 'qc' in existing_commands:
+            print(f"Command 'qc' already registered, skipping registration")
+            # Store the existing group for later use
+            self.qc_group = existing_commands['qc'] 
+            return
+        
         # Create the command group structure
         self.qc_group = app_commands.Group(name="qc", description="QuingCraft management commands (staff only)")
         self.whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=self.qc_group)
@@ -525,7 +534,12 @@ class AdminCommands(commands.Cog):
         ))
         
         # Add the groups to the bot
-        bot.tree.add_command(self.qc_group)
+        try:
+            bot.tree.add_command(self.qc_group)
+            print(f"Successfully registered 'qc' command group")
+        except app_commands.errors.CommandAlreadyRegistered:
+            print(f"Command 'qc' already registered, ignoring")
+            pass
     
     async def whitelist_add(self, interaction: discord.Interaction, username: str, discord_user: Optional[discord.Member] = None):
         """Add a player to the whitelist."""
@@ -1367,20 +1381,25 @@ class QuingCraftBot(commands.Bot):
         print("Cleaning up whitelist commands...")
         
         try:
-            # In newer discord.py versions, we can't delete commands by ID directly
-            # Instead, we'll sync an empty command list then re-add our commands
+            # In newer discord.py versions, we need to be careful about duplicate commands
+            # Let's check what commands are already registered
+            print("Checking existing commands...")
+            existing_commands = {cmd.name: cmd for cmd in self.tree.get_commands()}
             
-            # Add the AdminCommands cog with slash commands
-            print("Adding AdminCommands cog...")
-            admin_cog = AdminCommands(self)
-            await self.add_cog(admin_cog)
+            # We don't need to add AdminCommands cog again since it's already added in setup_hook
+            # Let's just verify existing commands and sync if needed
             
             # Guild-specific sync
             guild_id = os.getenv("DISCORD_GUILD_ID")
             if guild_id:
-                print(f"Force syncing commands to guild ID: {guild_id}")
+                print(f"Syncing commands to guild ID: {guild_id}")
                 guild = discord.Object(id=int(guild_id))
-                self.tree.copy_global_to(guild=guild)
+                
+                # Only copy global to guild if needed
+                if 'qc' in existing_commands:
+                    self.tree.copy_global_to(guild=guild)
+                
+                # Sync to guild
                 await self.tree.sync(guild=guild)
                 
                 # Verify sync results
@@ -1392,7 +1411,7 @@ class QuingCraftBot(commands.Bot):
                         for child in cmd.children:
                             print(f" - Child command: {child.name}")
             
-            # Check global commands - but don't perform sync
+            # Check global commands
             print("Verifying global commands...")
             global_updated_commands = await self.tree.fetch_commands()
             for cmd in global_updated_commands:
