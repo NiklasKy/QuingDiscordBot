@@ -656,6 +656,16 @@ class AdminCommands(commands.Cog):
         result = await self.bot.rcon.whitelist_remove(username)
         print(f"DEBUG: RCON whitelist_remove result: {result}")
         
+        # Wenn erfolgreich entfernt, auch den Datenbankeintrag als "removed" markieren
+        if result:
+            try:
+                # Setze den Status in der Datenbank auf "removed"
+                db_result = self.bot.db.remove_whitelist_user(username, interaction.user.id)
+                print(f"DEBUG: Database removal result: {db_result}")
+            except Exception as e:
+                print(f"ERROR: Error marking user as removed in database: {str(e)}")
+                traceback.print_exc()
+        
         # Send the result back to the user - public for everyone to see
         if result:
             await interaction.followup.send(WHITELIST_REMOVE_SUCCESS.format(username=username))

@@ -493,4 +493,40 @@ class Database:
                 return cur.fetchall()
         except Exception as e:
             print(f"Error getting whitelist users: {e}")
-            return [] 
+            return []
+    
+    def remove_whitelist_user(self, minecraft_username: str, moderator_id: int = None) -> bool:
+        """Remove a user from the whitelist by setting their status to 'removed'."""
+        try:
+            with self.conn.cursor() as cur:
+                # Finde den neuesten genehmigten Eintrag für diesen Benutzernamen
+                cur.execute("""
+                    SELECT id 
+                    FROM whitelist_requests
+                    WHERE minecraft_username = %s AND status = 'approved'
+                    ORDER BY processed_at DESC
+                    LIMIT 1
+                """, (minecraft_username,))
+                
+                result = cur.fetchone()
+                if not result:
+                    print(f"No approved whitelist request found for {minecraft_username}")
+                    return False
+                
+                request_id = result[0]
+                
+                # Aktualisiere den Status auf 'removed'
+                cur.execute("""
+                    UPDATE whitelist_requests
+                    SET status = 'removed', processed_at = NOW(), rejected_by = %s
+                    WHERE id = %s
+                """, (moderator_id, request_id))
+                
+                self.conn.commit()
+                print(f"Marked whitelist entry for {minecraft_username} as removed")
+                return True
+                
+        except Exception as e:
+            print(f"Error removing whitelist user from database: {e}")
+            self.conn.rollback()
+            return False 
