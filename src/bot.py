@@ -684,124 +684,108 @@ class AdminCommands(commands.Cog):
                 discord_id = user_entry[0]
                 mc_username = user_entry[1]
                 user_mappings[mc_username.lower()] = discord_id
+                print(f"DEBUG: Added mapping {mc_username.lower()} -> {discord_id}")
             
-            # Format and send the response
+            # Create a detailed embed for whitelist information
+            embed = discord.Embed(
+                title="Minecraft Whitelist",
+                description="Players currently on the whitelist",
+                color=discord.Color.green()
+            )
+            
+            # Display all approved users from database with their Discord links
+            if whitelist_users:
+                approved_users_str = []
+                
+                for entry in whitelist_users:
+                    discord_id = entry[0]
+                    mc_username = entry[1]
+                    approved_users_str.append(f"• **{mc_username}** - <@{discord_id}>")
+                
+                # Split into chunks if needed (Discord has a 1024 character limit per field)
+                chunks = []
+                current_chunk = []
+                current_length = 0
+                
+                for user_str in approved_users_str:
+                    if current_length + len(user_str) + 1 > 1000:  # +1 for newline
+                        chunks.append("\n".join(current_chunk))
+                        current_chunk = [user_str]
+                        current_length = len(user_str)
+                    else:
+                        current_chunk.append(user_str)
+                        current_length += len(user_str) + 1
+                
+                if current_chunk:
+                    chunks.append("\n".join(current_chunk))
+                
+                # Add fields for each chunk
+                for i, chunk in enumerate(chunks):
+                    if i == 0:
+                        embed.add_field(
+                            name="Whitelisted Players",
+                            value=chunk,
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=f"Whitelisted Players (continued {i+1})",
+                            value=chunk,
+                            inline=False
+                        )
+            else:
+                embed.add_field(
+                    name="Whitelisted Players",
+                    value="No players found in database",
+                    inline=False
+                )
+            
+            # Also get users from RCON to check for discrepancies
             if rcon_response and "Error:" not in rcon_response:
                 # Process the response to extract usernames
                 usernames = []
                 
-                # Debug the raw response format
+                # Parse the response to extract usernames
                 lines = rcon_response.strip().split('\n')
-                print(f"Split lines from response: {lines}")
-                
-                # Parse the usernames from the response - handle different formats
                 for line in lines:
                     line = line.strip()
-                    if not line:
+                    if not line or "Whitelisted" in line or "Players:" in line:
                         continue
                     
-                    print(f"Processing line: '{line}'")
-                    # Check for common patterns
-                    if "Whitelisted" in line or "Players:" in line:
-                        # Skip header lines
-                        continue
-                    
-                    # Extract actual username - could be various formats
-                    # Try to handle common formats:
-                    # 1. Just the username
-                    # 2. Username with prefix/suffix
-                    # 3. Username in a list format
-                    
-                    # Replace any special chars or prefixes that might be in the username display
+                    # Clean up the username
                     username = line.strip()
                     username = username.replace('•', '').strip()
                     username = username.replace('-', '').strip()
                     username = username.replace('*', '').strip()
                     
-                    # If we have a player username that contains meaningful characters, add it
                     if username and len(username) >= 3 and username != "Whitelisted":
                         usernames.append(username)
-                        print(f"Added username: '{username}'")
                 
-                # If no usernames were extracted, try a more aggressive approach
-                if not usernames:
-                    print("No usernames extracted with normal parsing, trying alternative method")
-                    # Join all text and try to extract usernames
-                    all_text = ' '.join(lines)
-                    words = all_text.split()
-                    for word in words:
-                        word = word.strip()
-                        # Remove special characters
-                        word = ''.join(c for c in word if c.isalnum() or c == '_')
-                        if word and len(word) >= 3 and word != "Whitelisted" and word != "Players":
-                            usernames.append(word)
-                            print(f"Added username with alternative method: '{word}'")
-                
-                # Create a detailed embed with user mappings
-                embed = discord.Embed(
-                    title="Minecraft Whitelist",
-                    description=f"Total whitelisted players: {len(usernames)}",
-                    color=discord.Color.green()
-                )
-                
-                # Add original response for debugging in case parsing fails
-                embed.add_field(
-                    name="Debug: Original Response",
-                    value=f"```{rcon_response[:1000]}```",
-                    inline=False
-                )
-                
-                # Sort usernames alphabetically
-                usernames.sort()
-                
-                # Group usernames with discord mapping in one field and without in another
-                mapped_users = []
-                unmapped_users = []
-                
-                for username in usernames:
-                    lower_username = username.lower()
-                    if lower_username in user_mappings:
-                        discord_id = user_mappings[lower_username]
-                        mapped_users.append(f"• {username} - <@{discord_id}>")
-                    else:
-                        unmapped_users.append(f"• {username}")
-                
-                # Add mapped users to embed
-                if mapped_users:
-                    embed.add_field(
-                        name="Players with Discord mapping",
-                        value="\n".join(mapped_users[:25]),  # Discord embed field limit
-                        inline=False
-                    )
+                # If we extracted usernames, create a section for unmapped players (in RCON but not in DB)
+                if usernames:
+                    # Find players in RCON that are not in our database
+                    unmapped_users = []
+                    for username in usernames:
+                        if username.lower() not in user_mappings:
+                            unmapped_users.append(f"• {username}")
                     
-                    # Add additional fields if more than 25 users
-                    if len(mapped_users) > 25:
-                        chunks = [mapped_users[i:i+25] for i in range(25, len(mapped_users), 25)]
-                        for i, chunk in enumerate(chunks):
-                            embed.add_field(
-                                name=f"Players with Discord mapping (continued {i+1})",
-                                value="\n".join(chunk),
-                                inline=False
-                            )
-                
-                # Add unmapped users to embed
-                if unmapped_users:
-                    # Split into chunks of 25 for embed field limits
-                    chunks = [unmapped_users[i:i+25] for i in range(0, len(unmapped_users), 25)]
-                    for i, chunk in enumerate(chunks):
-                        field_name = "Players without Discord mapping"
-                        if i > 0:
-                            field_name += f" (continued {i+1})"
+                    if unmapped_users:
                         embed.add_field(
-                            name=field_name,
-                            value="\n".join(chunk),
+                            name="Players Without Discord Mapping",
+                            value="\n".join(unmapped_users) if unmapped_users else "None",
                             inline=False
                         )
                 
-                # Send the embed
-                await interaction.followup.send(embed=embed)
-            else:
-                await interaction.followup.send(f"Failed to retrieve whitelist: {rcon_response}")
+                # Add original RCON response for debugging
+                embed.add_field(
+                    name="Debug: RCON Response",
+                    value=f"```{rcon_response[:500]}```",
+                    inline=False
+                )
+            
+            # Send the embed
+            await interaction.followup.send(embed=embed)
+            
         except Exception as e:
             print(f"Error in whitelist_show: {str(e)}")
             traceback.print_exc()
