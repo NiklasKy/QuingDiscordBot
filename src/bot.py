@@ -1497,10 +1497,12 @@ class QuingCraftBot(commands.Bot):
         
         # Add all cogs
         await self.add_cog(AdminCommands(self))
-        await self.add_cog(ElevatorCommands(self))
-        await self.add_cog(MinecraftCommands(self))
-        await self.add_cog(WhitelistCommands(self))
+        # Remove non-existent cogs
+        # await self.add_cog(ElevatorCommands(self))
+        # await self.add_cog(MinecraftCommands(self))
+        # await self.add_cog(WhitelistCommands(self))
         await self.add_cog(RequestCommands(self))
+        await self.add_cog(DebugCommands(self))
         
         # Register the commands with Discord
         await self.tree.sync()
