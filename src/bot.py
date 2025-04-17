@@ -478,31 +478,14 @@ class AdminCommands(commands.Cog):
         self.whitelist_group = app_commands.Group(name="whitelist", description="Whitelist management commands", parent=self.qc_group)
         self.roles_group = app_commands.Group(name="roles", description="Role management commands", parent=self.qc_group)
         
-        # Register the whitelist commands with proper parameters
-        add_command = app_commands.Command(
+        # Register the whitelist commands
+        # Using the simpler method to register commands with parameters
+        self.whitelist_group.add_command(app_commands.Command(
             name="add",
             description="Add a player to the whitelist and link to a Discord user",
             callback=self.whitelist_add,
             extras={"requires_staff": True}
-        )
-        # Add parameters
-        add_command.parameters.append(
-            app_commands.AppCommandOption(
-                name="username",
-                description="Minecraft username to add to the whitelist",
-                type=app_commands.AppCommandOptionType.string,
-                required=True
-            )
-        )
-        add_command.parameters.append(
-            app_commands.AppCommandOption(
-                name="discord_user",
-                description="Discord user to link with the Minecraft account (default: command issuer)",
-                type=app_commands.AppCommandOptionType.user,
-                required=False
-            )
-        )
-        self.whitelist_group.add_command(add_command)
+        ))
         
         self.whitelist_group.add_command(app_commands.Command(
             name="remove",
