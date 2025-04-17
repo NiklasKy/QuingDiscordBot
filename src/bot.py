@@ -701,7 +701,6 @@ class AdminCommands(commands.Cog):
             
             # Get user mappings from database
             whitelist_users = self.bot.db.get_whitelist_users()
-            print(f"DEBUG: Whitelist users from DB: {whitelist_users}")
             
             # Create user mappings - format is now (discord_id, minecraft_username, created_at, processed_at)
             user_mappings = {}
@@ -713,7 +712,6 @@ class AdminCommands(commands.Cog):
                 mc_username = user_entry[1]
                 user_mappings[mc_username.lower()] = discord_id
                 minecraft_usernames_lower.add(mc_username.lower())
-                print(f"DEBUG: Added mapping {mc_username.lower()} -> {discord_id}")
             
             # Create a detailed embed for whitelist information
             embed = discord.Embed(
@@ -797,10 +795,6 @@ class AdminCommands(commands.Cog):
                     
                     if username and len(username) >= 3 and username != "Whitelisted":
                         usernames.append((username, uuid_info))
-                        print(f"DEBUG: Extracted username from RCON: '{username}' with info: '{uuid_info}'")
-                
-                # Debug-Informationen zu den extrahierten Benutzernamen
-                print(f"DEBUG: Extracted {len(usernames)} usernames from RCON response")
                 
                 # If we extracted usernames, create a section for unmapped players (in RCON but not in DB)
                 if usernames:
@@ -814,19 +808,13 @@ class AdminCommands(commands.Cog):
                         # Direkter Vergleich (case-insensitive)
                         if username_lower in minecraft_usernames_lower:
                             username_found = True
-                            print(f"DEBUG: Username '{username}' found in DB via direct comparison")
                         
-                        # Wenn kein direkter Treffer, überprüfe ähnliche Namen mit Ähnlichkeitsprüfung
+                        # Falls der Name nicht gefunden wurde, füge ihn zu den unmapped_users hinzu
                         if not username_found:
-                            # Zeige alle Namen in der Datenbank für Debugging-Zwecke
-                            print(f"DEBUG: Checking '{username_lower}' against DB names: {sorted(minecraft_usernames_lower)}")
-                            
-                            # Falls der Name nicht gefunden wurde, füge ihn zu den unmapped_users hinzu
                             unmapped_info = f"• {username}"
                             if uuid_info:
                                 unmapped_info += f" ({uuid_info})"
                             unmapped_users.append(unmapped_info)
-                            print(f"DEBUG: Adding unmapped user: '{unmapped_info}'")
                     
                     # Only show this field if there are actually unmapped users
                     if unmapped_users:
@@ -835,16 +823,6 @@ class AdminCommands(commands.Cog):
                             value="\n".join(unmapped_users),
                             inline=False
                         )
-                
-                # Add original RCON response for debugging
-                # Temporarily enable debug mode to help identify the issue
-                debug_mode = True  # Temporarily set to True
-                if debug_mode:
-                    embed.add_field(
-                        name="Debug: RCON Response",
-                        value=f"```{rcon_response[:1000]}```",
-                        inline=False
-                    )
             
             # Send the embed
             await interaction.followup.send(embed=embed)
