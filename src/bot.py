@@ -1259,41 +1259,49 @@ class QuingCraftBot(commands.Bot):
             return False
     
     async def setup_hook(self) -> None:
-        """Set up the bot's commands and sync them."""
-        
-        print("Setting up bot...")
-        
-        # Create the task for cleaning up duplicate commands
-        # This will completely reset commands and add them back correctly
-        self.loop.create_task(self.whitelist_command_cleanup())
-        
-        # Add debug commands cog - this won't conflict with Slash commands
+        """Setup hook to register commands and cogs."""
+        await self.add_cog(AdminCommands(self))
         await self.add_cog(DebugCommands(self))
         
-        # Add command error handler
+        try:
+            # Register global commands and sync them
+            commands_synced = await self.tree.sync()
+            print(f"Synced {len(commands_synced)} commands")
+        except Exception as e:
+            print(f"Error syncing commands: {e}")
+            traceback.print_exc()
+        
         @self.event
         async def on_command_error(ctx, error):
-            if isinstance(error, commands.CommandNotFound):
+            """Default command error handler."""
+            if isinstance(error, commands.MissingRequiredArgument):
+                await ctx.send(f"Missing required argument: {error.param}")
+            elif isinstance(error, commands.CommandNotFound):
                 return
             elif isinstance(error, commands.CheckFailure):
-                await ctx.send(ERROR_PERMISSION_DENIED, delete_after=5)
+                await ctx.send(ERROR_PERMISSION_DENIED)
+            elif isinstance(error, commands.MissingPermissions):
+                await ctx.send(ERROR_PERMISSION_DENIED)
             else:
-                await ctx.send(f"{ERROR_PROCESSING} {str(error)}", delete_after=10)
-                print(f"Command error: {error}")
+                print(f"Unhandled command error: {error}")
+                traceback.print_exc()
+                await ctx.send(ERROR_GENERIC)
         
-        # Sync for the specific guild
-        guild_id = os.getenv("DISCORD_GUILD_ID")
-        if guild_id:
-            print(f"Syncing commands to guild ID: {guild_id}")
-            guild = discord.Object(id=int(guild_id))
-            self.tree.copy_global_to(guild=guild)
-            await self.tree.sync(guild=guild)
-            print("Guild command sync complete!")
+        # Verify sync results
+        print("Registered commands:")
+        for command in self.tree.get_commands():
+            print(f"/{command.name} - {command.description}")
         
-        # Global sync as backup
-        print("Starting global command sync...")
-        await self.tree.sync()
-        print("Global command sync complete!")
+        # Check global commands - but don't sync again
+        global_commands = await self.tree.fetch_commands()
+        print(f"Found {len(global_commands)} global commands")
+        for command in global_commands:
+            print(f"/{command.name} - {command.description}")
+        
+        # Schedule background task to cleanup old messages
+        self.bg_task = self.loop.create_task(self.whitelist_command_cleanup())
+        
+        print("Bot setup complete")
     
     async def whitelist_command_cleanup(self) -> None:
         """Clean up duplicate slash commands and re-add them."""
@@ -1303,7 +1311,7 @@ class QuingCraftBot(commands.Bot):
         print("Cleaning up whitelist commands...")
         
         try:
-            # Löschen von globalen Befehlen
+            # Delete global commands
             print("Deleting global commands...")
             global_commands = await self.tree.fetch_commands()
             for command in global_commands:
@@ -1311,7 +1319,7 @@ class QuingCraftBot(commands.Bot):
                     print(f"Removing global command: {command.name} (ID: {command.id})")
                     await self.tree.delete_command(command.id)
             
-            # Löschen von guild-spezifischen Befehlen
+            # Delete guild-specific commands
             guild_id = os.getenv("DISCORD_GUILD_ID")
             if guild_id:
                 guild = discord.Object(id=int(guild_id))
@@ -1330,14 +1338,14 @@ class QuingCraftBot(commands.Bot):
             admin_cog = AdminCommands(self)
             await self.add_cog(admin_cog)
             
-            # Explizites Sync nur für die spezifische Guild, kein globaler Sync
+            # Explicit sync only for the specific guild, no global sync
             if guild_id:
                 print(f"Force syncing commands to guild ID: {guild_id}")
                 guild = discord.Object(id=int(guild_id))
                 self.tree.copy_global_to(guild=guild)
                 await self.tree.sync(guild=guild)
                 
-                # Überprüfen der sync ergebnisse
+                # Verify sync results
                 print("Verifying guild commands...")
                 guild_updated_commands = await self.tree.fetch_commands(guild=guild)
                 for cmd in guild_updated_commands:
@@ -1346,7 +1354,7 @@ class QuingCraftBot(commands.Bot):
                         for child in cmd.children:
                             print(f" - Child command: {child.name}")
             
-            # Überprüfen der globalen Befehle - aber kein Sync durchführen
+            # Check global commands - but don't perform sync
             print("Verifying global commands...")
             global_updated_commands = await self.tree.fetch_commands()
             for cmd in global_updated_commands:

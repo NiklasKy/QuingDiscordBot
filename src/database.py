@@ -14,7 +14,7 @@ class Database:
     
     def __init__(self) -> None:
         """Initialize database connection."""
-        # Debug: Zeige alle Umgebungsvariablen
+        # Debug: Show all environment variables
         print("DEBUG: Environment variables:")
         for key in ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]:
             value = os.getenv(key)
@@ -23,7 +23,7 @@ class Database:
             else:
                 print(f"DEBUG: {key} is not set!")
         
-        # Verbinde zur Datenbank
+        # Connect to database
         self.conn = psycopg2.connect(
             host=os.getenv("DB_HOST"),
             port=os.getenv("DB_PORT"),
@@ -77,27 +77,27 @@ class Database:
         try:
             # Update whitelist_requests schema
             with self.conn.cursor() as cur:
-                # Prüfen, ob die Constraint existiert
+                # Check if constraint exists
                 cur.execute("""
                     SELECT 1 FROM pg_constraint 
                     WHERE conname = 'whitelist_requests_discord_id_status_key'
                 """)
                 if cur.fetchone():
-                    # Constraint existiert, entfernen
+                    # Constraint exists, remove it
                     cur.execute("""
                         ALTER TABLE whitelist_requests
                         DROP CONSTRAINT whitelist_requests_discord_id_status_key
                     """)
                     print("Removed unique constraint on discord_id and status")
                 
-                # Prüfen, ob die neuen Spalten bereits existieren
+                # Check if new columns already exist
                 cur.execute("""
                     SELECT column_name 
                     FROM information_schema.columns 
                     WHERE table_name = 'whitelist_requests' AND column_name = 'reason'
                 """)
                 if not cur.fetchone():
-                    # Spalten hinzufügen, wenn sie nicht existieren
+                    # Add columns if they don't exist
                     cur.execute("""
                         ALTER TABLE whitelist_requests
                         ADD COLUMN reason TEXT,
@@ -107,21 +107,21 @@ class Database:
                     """)
                     print("Added new columns to whitelist_requests table")
                 
-                # Prüfen, ob die message_id Spalte existiert
+                # Check if message_id column exists
                 cur.execute("""
                     SELECT column_name 
                     FROM information_schema.columns 
                     WHERE table_name = 'whitelist_requests' AND column_name = 'message_id'
                 """)
                 if not cur.fetchone():
-                    # message_id Spalte hinzufügen
+                    # Add message_id column
                     cur.execute("""
                         ALTER TABLE whitelist_requests
                         ADD COLUMN message_id BIGINT
                     """)
                     print("Added message_id column to whitelist_requests table")
                 
-                # Entfernen der potenziell problematischen unique index auf minecraft_username
+                # Remove potentially problematic unique index on minecraft_username
                 cur.execute("""
                     SELECT 1 FROM pg_indexes 
                     WHERE indexname = 'whitelist_requests_minecraft_username_unique_status'
@@ -142,7 +142,7 @@ class Database:
         """Add a new whitelist request to the database."""
         try:
             with self.conn.cursor() as cur:
-                # Prüfen, ob der Spieler bereits auf der Whitelist steht (approved status)
+                # Check if player is already on the whitelist (approved status)
                 cur.execute("""
                     SELECT discord_id FROM whitelist_requests
                     WHERE minecraft_username = %s AND status = 'approved'
@@ -151,13 +151,13 @@ class Database:
                 if existing:
                     print(f"Player {minecraft_username} already on whitelist")
                     
-                    # Wenn der Antrag von demselben Discord-Benutzer stammt, geben wir true zurück
+                    # If the request is from the same Discord user, return true
                     if existing[0] == discord_id:
                         print(f"This is the user's own approved request")
                         return True
                     return False
                 
-                # Prüfen, ob ein ausstehender Antrag für diesen Benutzer existiert
+                # Check if a pending request exists for this user
                 cur.execute("""
                     SELECT minecraft_username FROM whitelist_requests
                     WHERE discord_id = %s AND status = 'pending'
@@ -166,7 +166,7 @@ class Database:
                 if existing_request:
                     print(f"User {discord_id} already has a pending request for {existing_request[0]}")
                     
-                    # Wenn der Benutzer für denselben Minecraft-Namen einen Antrag hat, geben wir true zurück
+                    # If the user has a request for the same Minecraft name, return true
                     if existing_request[0] == minecraft_username:
                         print(f"This is the same request, returning success")
                         # Update message_id if provided
@@ -180,7 +180,7 @@ class Database:
                         return True
                     return False
                 
-                # Prüfen, ob ein ausstehender Antrag für diesen Minecraft-Namen existiert
+                # Check if a pending request exists for this Minecraft username
                 cur.execute("""
                     SELECT discord_id FROM whitelist_requests
                     WHERE minecraft_username = %s AND status = 'pending'
@@ -190,7 +190,7 @@ class Database:
                     print(f"Player name {minecraft_username} already has a pending request from another user")
                     return False
                 
-                # Neuen Antrag hinzufügen
+                # Add new request
                 cur.execute("""
                     INSERT INTO whitelist_requests (discord_id, minecraft_username, status, reason, message_id)
                     VALUES (%s, %s, 'pending', %s, %s)
@@ -250,13 +250,15 @@ class Database:
             return False
     
     def approve_request(self, discord_id: int, moderator_id: int = None) -> Tuple[bool, Optional[str]]:
-        """Approve a whitelist request. Returns (success, minecraft_username)."""
+        """Approve a whitelist request for a user."""
         try:
             with self.conn.cursor() as cur:
-                # Holen des ausstehenden Antrags
+                # Check if the Minecraft name is already on the whitelist
                 cur.execute("""
                     SELECT id, minecraft_username FROM whitelist_requests
                     WHERE discord_id = %s AND status = 'pending'
+                    ORDER BY created_at DESC
+                    LIMIT 1
                 """, (discord_id,))
                 request = cur.fetchone()
                 
@@ -266,34 +268,26 @@ class Database:
                 
                 request_id, minecraft_username = request
                 
-                # Prüfen, ob der Minecraft-Name bereits auf der Whitelist steht
+                # Update the request status
                 cur.execute("""
-                    SELECT id FROM whitelist_requests
-                    WHERE minecraft_username = %s AND status = 'approved' AND id != %s
-                """, (minecraft_username, request_id))
-                
-                if cur.fetchone():
-                    # Name ist bereits auf der Whitelist, setzen wir diesen Antrag auf "duplicate"
-                    cur.execute("""
-                        UPDATE whitelist_requests
-                        SET status = 'duplicate'
-                        WHERE id = %s
-                    """, (request_id,))
-                    self.conn.commit()
-                    print(f"Set request to duplicate for {minecraft_username}")
-                    return True, minecraft_username
-                
-                # Aktualisieren des Status auf "approved"
-                cur.execute("""
-                    UPDATE whitelist_requests
-                    SET status = 'approved', approved_by = %s, processed_at = NOW()
+                    UPDATE whitelist_requests 
+                    SET status = 'approved', approved_by = %s, processed_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """, (moderator_id, request_id))
+                
+                # Get the message ID for this request to update the message
+                cur.execute("""
+                    SELECT message_id FROM whitelist_requests
+                    WHERE id = %s
+                """, (request_id,))
+                message_id_row = cur.fetchone()
+                message_id = message_id_row[0] if message_id_row else None
+                
                 self.conn.commit()
-                print(f"Approved request for {minecraft_username}")
+                print(f"Approved whitelist request for {minecraft_username} (Discord ID: {discord_id})")
                 return True, minecraft_username
         except Exception as e:
-            print(f"Database error in approve_request: {e}")
+            print(f"Error approving whitelist request: {e}")
             self.conn.rollback()
             return False, None
 
@@ -366,34 +360,27 @@ class Database:
         """Add a new role request to the database."""
         try:
             with self.conn.cursor() as cur:
-                # Prüfen, ob ein ausstehender Antrag für diesen Benutzer existiert
+                # Check if a pending request exists for this user
                 cur.execute("""
-                    SELECT id FROM role_requests
+                    SELECT minecraft_username, requested_role FROM role_requests
                     WHERE discord_id = %s AND status = 'pending'
                 """, (discord_id,))
-                if cur.fetchone():
-                    print(f"User {discord_id} already has a pending role request")
-                    # Update message_id if provided and it's a pending request
-                    if message_id:
-                        cur.execute("""
-                            UPDATE role_requests 
-                            SET message_id = %s
-                            WHERE discord_id = %s AND status = 'pending'
-                        """, (message_id, discord_id))
-                        self.conn.commit()
+                existing_request = cur.fetchone()
+                if existing_request:
+                    print(f"User {discord_id} already has a pending role request for {existing_request[0]}")
                     return False
                 
-                # Neuen Antrag hinzufügen
+                # Add new request
                 cur.execute("""
-                    INSERT INTO role_requests (discord_id, minecraft_username, requested_role, reason, message_id)
-                    VALUES (%s, %s, %s, %s, %s)
+                    INSERT INTO role_requests (discord_id, minecraft_username, requested_role, status, reason, message_id)
+                    VALUES (%s, %s, %s, 'pending', %s, %s)
                     RETURNING id
                 """, (discord_id, minecraft_username, requested_role, reason, message_id))
                 self.conn.commit()
                 result = cur.fetchone()
                 return result is not None
         except Exception as e:
-            print(f"Database error in add_role_request: {e}")
+            print(f"Error adding role request: {e}")
             self.conn.rollback()
             return False
     
@@ -488,48 +475,17 @@ class Database:
             return False
     
     def get_whitelist_users(self) -> List[tuple]:
-        """Get all approved whitelist users with their Discord IDs."""
+        """Get list of approved whitelist users."""
         try:
             with self.conn.cursor() as cur:
-                # Hauptabfrage: Alle genehmigten Benutzer
+                # Check if this user is already in the approved users
                 cur.execute("""
-                    SELECT minecraft_username, discord_id 
+                    SELECT discord_id, minecraft_username, created_at, processed_at
                     FROM whitelist_requests
                     WHERE status = 'approved'
-                    ORDER BY minecraft_username
+                    ORDER BY processed_at DESC
                 """)
-                approved_users = cur.fetchall()
-                
-                # Bekannte Abbildungen von Minecraft-Namen zu Discord-IDs
-                known_mappings = {
-                    "CassiaQuing": 24229211683697792,  # Explizites Mapping hinzufügen
-                }
-                
-                # Suche nach bestimmten Benutzernamen, unabhängig vom Status
-                for username, discord_id in known_mappings.items():
-                    # Überprüfen, ob dieser Benutzer bereits in den genehmigten Benutzern ist
-                    if not any(approved_username.lower() == username.lower() for approved_username, _ in approved_users):
-                        # Suche nach diesem Benutzernamen in der Datenbank
-                        cur.execute("""
-                            SELECT minecraft_username, discord_id 
-                            FROM whitelist_requests
-                            WHERE LOWER(minecraft_username) = LOWER(%s)
-                            ORDER BY created_at DESC
-                            LIMIT 1
-                        """, (username,))
-                        result = cur.fetchone()
-                        
-                        if result:
-                            # Füge den Eintrag zu den genehmigten Benutzern hinzu
-                            approved_users.append(result)
-                            print(f"Added special mapping for {result[0]} -> {result[1]}")
-                        else:
-                            # Wenn nicht in der DB gefunden, füge das bekannte Mapping hinzu
-                            approved_users.append((username, discord_id))
-                            print(f"Added hardcoded mapping for {username} -> {discord_id}")
-                
-                return approved_users
+                return cur.fetchall()
         except Exception as e:
-            print(f"Database error in get_whitelist_users: {e}")
-            self.conn.rollback()
+            print(f"Error getting whitelist users: {e}")
             return [] 

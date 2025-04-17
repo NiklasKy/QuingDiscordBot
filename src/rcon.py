@@ -20,7 +20,7 @@ class RconHandler:
     
     def __init__(self) -> None:
         """Initialize RCON connection parameters."""
-        # Verwende host.docker.internal statt der Umgebungsvariable
+        # Use host.docker.internal instead of the environment variable
         self.host = "host.docker.internal"
         self.port = int(os.getenv("RCON_PORT", "25575"))
         self.password = os.getenv("RCON_PASSWORD")
