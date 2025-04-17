@@ -1705,6 +1705,10 @@ class QuingCraftBot(commands.Bot):
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
         try:
+            # Zuerst den Whitelist-Kanal säubern und alle alten Bot-Nachrichten entfernen
+            await self.clean_whitelist_channel()
+            print("Cleaned whitelist channel before creating new message")
+            
             channel_id_str = os.getenv("WHITELIST_CHANNEL_ID")
             if not channel_id_str:
                 print("ERROR: WHITELIST_CHANNEL_ID not set in environment variables")
