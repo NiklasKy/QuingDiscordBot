@@ -676,7 +676,14 @@ class AdminCommands(commands.Cog):
             
             # Get user mappings from database
             whitelist_users = self.bot.db.get_whitelist_users()
-            user_mappings = {mc_username.lower(): discord_id for mc_username, discord_id in whitelist_users}
+            print(f"DEBUG: Whitelist users from DB: {whitelist_users}")
+            
+            # Create user mappings - format is now (discord_id, minecraft_username, created_at, processed_at)
+            user_mappings = {}
+            for user_entry in whitelist_users:
+                discord_id = user_entry[0]
+                mc_username = user_entry[1]
+                user_mappings[mc_username.lower()] = discord_id
             
             # Format and send the response
             if rcon_response and "Error:" not in rcon_response:
