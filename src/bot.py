@@ -683,10 +683,14 @@ class AdminCommands(commands.Cog):
             
             # Create user mappings - format is now (discord_id, minecraft_username, created_at, processed_at)
             user_mappings = {}
+            # Speichere alle Minecraft-Benutzernamen in Kleinbuchstaben für den Vergleich
+            minecraft_usernames_lower = set()
+            
             for user_entry in whitelist_users:
                 discord_id = user_entry[0]
                 mc_username = user_entry[1]
                 user_mappings[mc_username.lower()] = discord_id
+                minecraft_usernames_lower.add(mc_username.lower())
                 print(f"DEBUG: Added mapping {mc_username.lower()} -> {discord_id}")
             
             # Create a detailed embed for whitelist information
@@ -769,8 +773,10 @@ class AdminCommands(commands.Cog):
                     # Find players in RCON that are not in our database
                     unmapped_users = []
                     for username in usernames:
-                        if username.lower() not in user_mappings:
+                        # Konvertiere den Benutzernamen in Kleinbuchstaben für den Vergleich
+                        if username.lower() not in minecraft_usernames_lower:
                             unmapped_users.append(f"• {username}")
+                            print(f"DEBUG: Found unmapped user: {username}")
                     
                     # Only show this field if there are actually unmapped users
                     if unmapped_users:
@@ -797,7 +803,7 @@ class AdminCommands(commands.Cog):
             print(f"Error in whitelist_show: {str(e)}")
             traceback.print_exc()
             await interaction.followup.send(f"An error occurred while retrieving the whitelist: {str(e)}")
-
+    
     async def roles_update(self, interaction: discord.Interaction, minecraft_username: str, discord_user: discord.Member = None):
         """Update a player's roles based on their Discord roles."""
         # Check if user has staff permission
