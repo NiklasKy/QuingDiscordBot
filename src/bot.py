@@ -769,19 +769,23 @@ class AdminCommands(commands.Cog):
                         if username.lower() not in user_mappings:
                             unmapped_users.append(f"• {username}")
                     
+                    # Only show this field if there are actually unmapped users
                     if unmapped_users:
                         embed.add_field(
                             name="Players Without Discord Mapping",
-                            value="\n".join(unmapped_users) if unmapped_users else "None",
+                            value="\n".join(unmapped_users),
                             inline=False
                         )
                 
                 # Add original RCON response for debugging
-                embed.add_field(
-                    name="Debug: RCON Response",
-                    value=f"```{rcon_response[:500]}```",
-                    inline=False
-                )
+                # Only include for debugging purposes
+                debug_mode = False  # Set to True when troubleshooting
+                if debug_mode:
+                    embed.add_field(
+                        name="Debug: RCON Response",
+                        value=f"```{rcon_response[:500]}```",
+                        inline=False
+                    )
             
             # Send the embed
             await interaction.followup.send(embed=embed)
