@@ -49,7 +49,7 @@ DEBUG_NO_PENDING_REQUESTS = "There are no pending whitelist requests."
 DEBUG_INVALID_MESSAGE_ID = "Invalid message ID. Please provide a valid number."
 
 # Role selector view texts
-ROLE_SELECTOR_TITLE = "Minecraft Role Manager"
+ROLE_SELECTOR_TITLE = "Minecraft Role Manager 1.21.4"
 ROLE_SELECTOR_DESCRIPTION = "Manage your in-game roles using the options below. Note: You must have joined the server at least once before you can request or receive any role."
 ROLE_SELECTOR_SUB_TITLE = "🌟 Subscriber Benefits"
 ROLE_SELECTOR_SUB_DESCRIPTION = "Twitch subscribers can claim the Subscriber role in-game for exclusive perks. Use the **Get Sub Role** button to link your accounts."
