@@ -11,6 +11,7 @@ WHITELIST_APPROVED = "🎉 Great news! Your whitelist request has been approved!
 WHITELIST_REJECTED = "We're sorry, but your whitelist request has been declined. If you have any questions or would like to appeal this decision, please contact a staff member."
 WHITELIST_PENDING = "You already have a pending whitelist request. Please wait for it to be processed before submitting a new one. Our staff reviews requests as quickly as possible."
 WHITELIST_DUPLICATE = "There's already a pending request for this Minecraft username. If this is your account, please wait for your request to be processed. If you believe this is an error, please contact a staff member."
+WHITELIST_ALREADY_APPROVED = "Good news! Your Minecraft username **{username}** is already on our whitelist. You can connect to the server immediately!\n\n**Server Address:** quingcraft.niklasky.com"
 # Neue DM Texte für Whitelist-Benachrichtigungen
 WHITELIST_APPROVED_DM = "🎉 Great news! Your whitelist request has been approved! You can now join our Minecraft server as **{username}**.\n\n**Server Address:** quingcraft.niklasky.com"
 WHITELIST_DENIED_DM = "We're sorry, but your whitelist request has been declined. If you have any questions or would like to appeal this decision, please contact a staff member."

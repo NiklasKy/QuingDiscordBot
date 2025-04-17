@@ -65,7 +65,8 @@ from .texts import (
     ROLE_SELECTOR_REQUEST_TITLE,
     ROLE_SELECTOR_REQUEST_DESCRIPTION,
     WHITELIST_APPROVED_DM,
-    WHITELIST_DENIED_DM
+    WHITELIST_DENIED_DM,
+    WHITELIST_ALREADY_APPROVED
 )
 
 load_dotenv()
@@ -217,6 +218,20 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
                 )
                 return
             
+            # Add the request to the database first to check if already approved
+            added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason, None)
+            
+            # Prüfen, ob der Benutzer bereits auf der Whitelist steht
+            if added_request == "already_approved":
+                print(f"User {user.name} is trying to request whitelist for {minecraft_username}, but it's already approved")
+                
+                # Informiere den Benutzer, dass er bereits auf der Whitelist steht
+                await interaction.response.send_message(
+                    WHITELIST_ALREADY_APPROVED.format(username=minecraft_username),
+                    ephemeral=True
+                )
+                return
+            
             # Confirm to the user that the request has been received
             await interaction.response.send_message(
                 WHITELIST_SUCCESS,
@@ -258,12 +273,9 @@ class WhitelistModal(discord.ui.Modal, title="Whitelist Request"):
             await message.add_reaction("✅")
             await message.add_reaction("❌")
             
-            # Add the request to the database - now with message_id
-            added_request = self.bot.db.add_whitelist_request(user.id, minecraft_username, reason, message.id)
-            if not added_request:
-                print(f"Failed to add whitelist request to database for {user.name}")
-                await user.send(ERROR_DATABASE)
-                return
+            # Aktualisiere den vorherigen Datenbankeintrag mit der Nachrichten-ID
+            if added_request and not isinstance(added_request, str):
+                self.bot.db.set_whitelist_request_message_id(user.id, message.id)
             
             # Save the message ID for later
             self.bot.pending_requests[user.id] = message.id

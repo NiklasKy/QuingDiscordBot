@@ -175,25 +175,20 @@ class Database:
                     print(f"Player name {minecraft_username} already has a pending request from another user")
                     return False
                 
-                # Check if this user had an approved request for this username before
-                # Instead of blocking the request, we'll check if they're actually on the whitelist
+                # Prüfe, ob der Benutzer bereits einen genehmigten Whitelist-Eintrag hat
                 cur.execute("""
                     SELECT discord_id, id FROM whitelist_requests
-                    WHERE minecraft_username = %s AND discord_id = %s AND status = 'approved'
+                    WHERE minecraft_username = %s AND status = 'approved'
                     ORDER BY processed_at DESC
                     LIMIT 1
-                """, (minecraft_username, discord_id))
+                """, (minecraft_username,))
                 previously_approved = cur.fetchone()
                 
                 if previously_approved:
-                    print(f"User {discord_id} previously had an approved request for {minecraft_username}")
-                    # We'll mark the old request as 'removed' so we know they were once approved
-                    cur.execute("""
-                        UPDATE whitelist_requests
-                        SET status = 'removed'
-                        WHERE id = %s
-                    """, (previously_approved[1],))
-                    print(f"Marked previous request as 'removed'")
+                    print(f"User with Minecraft username {minecraft_username} already has an approved whitelist request")
+                    # Anstatt den Status auf 'removed' zu setzen, geben wir einfach zurück, dass der Benutzer
+                    # bereits auf der Whitelist steht - wir setzen hier einen speziellen Rückgabewert
+                    return "already_approved"
                 
                 # Add new request
                 cur.execute("""
