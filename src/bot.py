@@ -1066,6 +1066,21 @@ class DebugCommands(commands.Cog):
     
     def __init__(self, bot):
         self.bot = bot
+        
+        # Registriere den debug-Slash-Command
+        try:
+            @bot.tree.command(name="debug", description="Test if the bot is working properly")
+            async def debug_command(interaction: discord.Interaction):
+                """Simple debug command to test if the bot is working."""
+                print(f"DEBUG: debug command called by {interaction.user.name} (ID: {interaction.user.id})")
+                await interaction.response.send_message(
+                    f"Bot is working! Server: {interaction.guild.name}, Channel: {interaction.channel.name}, User: {interaction.user.name}",
+                    ephemeral=True
+                )
+            
+            print("Successfully registered debug slash command")
+        except Exception as e:
+            print(f"ERROR registering debug slash command: {e}")
     
     async def cog_check(self, ctx):
         """Check if the user has staff role."""
@@ -1115,15 +1130,74 @@ class DebugCommands(commands.Cog):
         result = await self.bot.rcon.whitelist_check(username)
         status = WHITELIST_CHECK_ON if result else WHITELIST_CHECK_OFF
         await ctx.send(WHITELIST_CHECK_RESULT.format(username=username, status=status))
+        
+    @commands.command(name="debug_channels")
+    async def debug_channels_command(self, ctx):
+        """Debug command to check if channels can be found."""
+        try:
+            response = "Channel Debug Information:\n\n"
+            
+            # Versuche den Whitelist-Channel zu finden
+            whitelist_channel_id = os.getenv("WHITELIST_CHANNEL_ID")
+            if whitelist_channel_id:
+                whitelist_channel = self.bot.get_channel(int(whitelist_channel_id))
+                if whitelist_channel:
+                    response += f"✅ Whitelist Channel: {whitelist_channel.name} (ID: {whitelist_channel_id})\n"
+                else:
+                    response += f"❌ Whitelist Channel: Not found (ID: {whitelist_channel_id})\n"
+            
+            # Versuche den Mod-Channel zu finden
+            mod_channel_id = os.getenv("MOD_CHANNEL_ID")
+            if mod_channel_id:
+                mod_channel = self.bot.get_channel(int(mod_channel_id))
+                if mod_channel:
+                    response += f"✅ Mod Channel: {mod_channel.name} (ID: {mod_channel_id})\n"
+                else:
+                    response += f"❌ Mod Channel: Not found (ID: {mod_channel_id})\n"
+            
+            # Aktueller Server und aktuelle Berechtigungen
+            guild = ctx.guild
+            response += f"\nCurrent Server: {guild.name} (ID: {guild.id})\n"
+            response += f"Bot Permissions: {guild.me.guild_permissions}\n"
+            
+            # Sende eine Testnachricht in den Whitelist-Channel
+            if whitelist_channel_id and whitelist_channel:
+                try:
+                    test_msg = await whitelist_channel.send("Test message - will be deleted")
+                    await test_msg.delete()
+                    response += f"\n✅ Successfully sent and deleted a test message in the whitelist channel.\n"
+                except Exception as e:
+                    response += f"\n❌ Failed to send test message in whitelist channel: {str(e)}\n"
+            
+            await ctx.send(response)
+        except Exception as e:
+            await ctx.send(f"Error during debug: {str(e)}")
+            traceback.print_exc()
 
 class QuingCraftBot(commands.Bot):
     """Main bot class for QuingCraft."""
     
     def __init__(self) -> None:
-        """Initialize the bot with necessary components."""
-        intents = discord.Intents.all()  # Use all intents
+        """Initialize the bot."""
+        intents = discord.Intents.default()
+        intents.members = True  # Benötigt für Member-Informationen
+        intents.message_content = True  # Benötigt für Nachrichteninhalte
         
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(
+            command_prefix="!",  # Fallback-Präfix für normale Befehle
+            intents=intents
+        )
+        
+        # Debug-Ausgabe für Umgebungsvariablen
+        print("=== DEBUG: Environment Variables ===")
+        print(f"DISCORD_GUILD_ID: {os.getenv('DISCORD_GUILD_ID')}")
+        print(f"MOD_CHANNEL_ID: {os.getenv('MOD_CHANNEL_ID')}")
+        print(f"WHITELIST_CHANNEL_ID: {os.getenv('WHITELIST_CHANNEL_ID')}")
+        print(f"ADMIN_ROLE_ID: {os.getenv('ADMIN_ROLE_ID')}")
+        print(f"MOD_ROLE_ID: {os.getenv('MOD_ROLE_ID')}")
+        print(f"WHITELIST_ROLE_ID: {os.getenv('WHITELIST_ROLE_ID')}")
+        print("=================================")
+        
         self.db = Database()
         self.rcon = RconHandler()
         self.pending_requests = {}
@@ -1530,13 +1604,43 @@ class QuingCraftBot(commands.Bot):
         print("Registering slash commands...")
         
         # Add all cogs
-        await self.add_cog(AdminCommands(self))
+        try:
+            await self.add_cog(AdminCommands(self))
+            print("Successfully added AdminCommands cog")
+        except Exception as e:
+            print(f"ERROR adding AdminCommands cog: {e}")
+        
         # Nicht existierende Cogs wurden entfernt
-        await self.add_cog(RequestCommands(self))
-        await self.add_cog(DebugCommands(self))  # Hinzugefügt, da diese Klasse existiert
+        try:
+            await self.add_cog(RequestCommands(self))
+            print("Successfully added RequestCommands cog")
+        except Exception as e:
+            print(f"ERROR adding RequestCommands cog: {e}")
+            
+        try:
+            await self.add_cog(DebugCommands(self))  # Hinzugefügt, da diese Klasse existiert
+            print("Successfully added DebugCommands cog")
+        except Exception as e:
+            print(f"ERROR adding DebugCommands cog: {e}")
         
         # Register the commands with Discord
-        await self.tree.sync()
+        try:
+            print("Syncing commands to Discord...")
+            # Hole die aktuelle Guild ID
+            guild_id = os.getenv("DISCORD_GUILD_ID")
+            if guild_id:
+                print(f"Syncing to specific guild: {guild_id}")
+                guild = discord.Object(id=int(guild_id))
+                await self.tree.sync(guild=guild)
+                print("Guild-specific command sync complete")
+            
+            # Synchronisiere global
+            await self.tree.sync()
+            print("Global command sync complete")
+            
+        except Exception as e:
+            print(f"ERROR syncing commands: {e}")
+            traceback.print_exc()
         
         # Print the completion time
         end_time = time.time()
@@ -1592,32 +1696,60 @@ class QuingCraftBot(commands.Bot):
     
     async def create_whitelist_message(self) -> None:
         """Create or update the whitelist message in the channel."""
-        channel_id = int(os.getenv("WHITELIST_CHANNEL_ID"))
-        channel = self.get_channel(channel_id)
-        
-        if not channel:
-            print(f"Could not find channel with ID {channel_id}")
-            return
-        
-        # Delete old message if it exists
-        if self.whitelist_message_id:
+        try:
+            channel_id = int(os.getenv("WHITELIST_CHANNEL_ID"))
+            print(f"DEBUG: Attempting to get whitelist channel with ID {channel_id}")
+            channel = self.get_channel(channel_id)
+            
+            if not channel:
+                print(f"ERROR: Could not find channel with ID {channel_id}")
+                
+                # Versuche den Kanal über die fetch_channel-Methode zu holen
+                try:
+                    print(f"DEBUG: Attempting to fetch channel using fetch_channel")
+                    channel = await self.fetch_channel(channel_id)
+                    print(f"DEBUG: Successfully fetched channel: {channel.name}")
+                except Exception as fetch_error:
+                    print(f"ERROR during fetch_channel: {fetch_error}")
+                    return
+                
+            # Debug-Informationen zum gefundenen Kanal
+            print(f"DEBUG: Found channel: {channel.name} (Type: {type(channel).__name__})")
+            print(f"DEBUG: Channel permissions: {channel.permissions_for(channel.guild.me)}")
+            
+            # Delete old message if it exists
+            if self.whitelist_message_id:
+                try:
+                    print(f"DEBUG: Attempting to fetch and delete old message with ID {self.whitelist_message_id}")
+                    old_message = await channel.fetch_message(self.whitelist_message_id)
+                    await old_message.delete()
+                    print(f"DEBUG: Successfully deleted old message")
+                except discord.NotFound:
+                    print(f"DEBUG: Old message not found, skipping deletion")
+                    pass
+                except Exception as msg_error:
+                    print(f"ERROR deleting old message: {msg_error}")
+            
+            # Create new message
+            print(f"DEBUG: Creating new whitelist message")
+            embed = discord.Embed(
+                title=WHITELIST_TITLE,
+                description=WHITELIST_DESCRIPTION,
+                color=discord.Color.blue()
+            )
+            
             try:
-                old_message = await channel.fetch_message(self.whitelist_message_id)
-                await old_message.delete()
-            except discord.NotFound:
-                pass
-        
-        # Create new message
-        embed = discord.Embed(
-            title=WHITELIST_TITLE,
-            description=WHITELIST_DESCRIPTION,
-            color=discord.Color.blue()
-        )
-        
-        view = WhitelistView(self)
-        message = await channel.send(embed=embed, view=view)
-        self.whitelist_message_id = message.id
-        print(f"Created whitelist message with ID {message.id}")
+                view = WhitelistView(self)
+                message = await channel.send(embed=embed, view=view)
+                self.whitelist_message_id = message.id
+                print(f"DEBUG: Created whitelist message with ID {message.id}")
+            except Exception as send_error:
+                print(f"ERROR sending whitelist message: {send_error}")
+                traceback.print_exc()
+            
+        except Exception as general_error:
+            print(f"ERROR in create_whitelist_message: {general_error}")
+            traceback.print_exc()
     
     async def create_role_message(self) -> None:
         """Create or update the role update message in the channel."""
@@ -1673,8 +1805,49 @@ class QuingCraftBot(commands.Bot):
         print(f"Logged in as {self.user.name} ({self.user.id})")
         print(f"Bot is a member of {len(self.guilds)} guilds")
         
+        # Debug: Liste alle Guilds auf, in denen der Bot Mitglied ist
         for guild in self.guilds:
-            print(f" - {guild.name} (ID: {guild.id})")
+            print(f" - Guild: {guild.name} (ID: {guild.id})")
+            
+            # Debug: Liste alle Kanäle in dieser Guild auf
+            print(f"   Channels in {guild.name}:")
+            for channel in guild.channels:
+                if isinstance(channel, discord.TextChannel):
+                    print(f"   - Text Channel: {channel.name} (ID: {channel.id})")
+                elif isinstance(channel, discord.VoiceChannel):
+                    print(f"   - Voice Channel: {channel.name} (ID: {channel.id})")
+                elif isinstance(channel, discord.CategoryChannel):
+                    print(f"   - Category: {channel.name} (ID: {channel.id})")
+                    
+            # Debug: Liste alle Rollen in dieser Guild auf
+            print(f"   Roles in {guild.name}:")
+            for role in guild.roles:
+                print(f"   - Role: {role.name} (ID: {role.id})")
+        
+        # Versuche, die konfigurierten Kanäle zu finden
+        target_guild_id = os.getenv("DISCORD_GUILD_ID")
+        mod_channel_id = os.getenv("MOD_CHANNEL_ID")
+        whitelist_channel_id = os.getenv("WHITELIST_CHANNEL_ID")
+        
+        print(f"Searching for configured channels...")
+        print(f"Target Guild ID: {target_guild_id}")
+        print(f"Target Mod Channel ID: {mod_channel_id}")
+        print(f"Target Whitelist Channel ID: {whitelist_channel_id}")
+        
+        # Prüfe, ob die konfigurierten Kanäle gefunden werden können
+        if mod_channel_id:
+            mod_channel = self.get_channel(int(mod_channel_id))
+            if mod_channel:
+                print(f"✓ Found mod channel: {mod_channel.name} in guild {mod_channel.guild.name}")
+            else:
+                print(f"✗ ERROR: Could not find mod channel with ID {mod_channel_id}")
+                
+        if whitelist_channel_id:
+            whitelist_channel = self.get_channel(int(whitelist_channel_id))
+            if whitelist_channel:
+                print(f"✓ Found whitelist channel: {whitelist_channel.name} in guild {whitelist_channel.guild.name}")
+            else:
+                print(f"✗ ERROR: Could not find whitelist channel with ID {whitelist_channel_id}")
         
         # Loading pending requests from the database
         print("Loading pending requests from database...")
@@ -1682,10 +1855,26 @@ class QuingCraftBot(commands.Bot):
         await self.load_pending_role_requests()
         
         # Clean up whitelist channel before creating new messages
-        await self.clean_whitelist_channel()
+        try:
+            await self.clean_whitelist_channel()
+            print("Whitelist channel cleaned successfully")
+        except Exception as e:
+            print(f"ERROR cleaning whitelist channel: {e}")
+            traceback.print_exc()
         
-        await self.create_whitelist_message()
-        await self.create_role_message()
+        try:
+            await self.create_whitelist_message()
+            print("Whitelist message created successfully")
+        except Exception as e:
+            print(f"ERROR creating whitelist message: {e}")
+            traceback.print_exc()
+            
+        try:
+            await self.create_role_message()
+            print("Role message created successfully")
+        except Exception as e:
+            print(f"ERROR creating role message: {e}")
+            traceback.print_exc()
         
         # Message about command availability
         print("Commands should now be available in Discord!")
