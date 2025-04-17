@@ -142,22 +142,7 @@ class Database:
         """Add a new whitelist request to the database."""
         try:
             with self.conn.cursor() as cur:
-                # Check if player is already on the whitelist (approved status)
-                cur.execute("""
-                    SELECT discord_id FROM whitelist_requests
-                    WHERE minecraft_username = %s AND status = 'approved'
-                """, (minecraft_username,))
-                existing = cur.fetchone()
-                if existing:
-                    print(f"Player {minecraft_username} already on whitelist")
-                    
-                    # If the request is from the same Discord user, return true
-                    if existing[0] == discord_id:
-                        print(f"This is the user's own approved request")
-                        return True
-                    return False
-                
-                # Check if a pending request exists for this user
+                # First check if there's already a pending request from this user
                 cur.execute("""
                     SELECT minecraft_username FROM whitelist_requests
                     WHERE discord_id = %s AND status = 'pending'
@@ -180,7 +165,7 @@ class Database:
                         return True
                     return False
                 
-                # Check if a pending request exists for this Minecraft username
+                # Check if another user has a pending request for this Minecraft username
                 cur.execute("""
                     SELECT discord_id FROM whitelist_requests
                     WHERE minecraft_username = %s AND status = 'pending'
@@ -189,6 +174,26 @@ class Database:
                 if existing_name_request and existing_name_request[0] != discord_id:
                     print(f"Player name {minecraft_username} already has a pending request from another user")
                     return False
+                
+                # Check if this user had an approved request for this username before
+                # Instead of blocking the request, we'll check if they're actually on the whitelist
+                cur.execute("""
+                    SELECT discord_id, id FROM whitelist_requests
+                    WHERE minecraft_username = %s AND discord_id = %s AND status = 'approved'
+                    ORDER BY processed_at DESC
+                    LIMIT 1
+                """, (minecraft_username, discord_id))
+                previously_approved = cur.fetchone()
+                
+                if previously_approved:
+                    print(f"User {discord_id} previously had an approved request for {minecraft_username}")
+                    # We'll mark the old request as 'removed' so we know they were once approved
+                    cur.execute("""
+                        UPDATE whitelist_requests
+                        SET status = 'removed'
+                        WHERE id = %s
+                    """, (previously_approved[1],))
+                    print(f"Marked previous request as 'removed'")
                 
                 # Add new request
                 cur.execute("""
