@@ -356,7 +356,7 @@ class RoleRequestModal(discord.ui.Modal, title="Request Special Role"):
                 return
             
             # Validate role name
-            allowed_roles = ["default", "sub", "vip", "VTuber"]
+            allowed_roles = ["default", "subscriber", "vip", "VTuber"]
             if requested_role not in allowed_roles:
                 await interaction.response.send_message(
                     f"Ungültige Rolle: **{requested_role}**. Erlaubte Rollen sind: {', '.join(allowed_roles)}",
@@ -435,7 +435,7 @@ class RoleSelectorView(discord.ui.View):
         super().__init__(timeout=None)
         self.bot = bot
     
-    @discord.ui.button(label="Get Sub Role", style=discord.ButtonStyle.success, emoji="⭐", custom_id="role_selector:sub_v2")
+    @discord.ui.button(label="Get Subscriber Role", style=discord.ButtonStyle.success, emoji="⭐", custom_id="role_selector:sub_v2")
     async def get_sub_role(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
         """Handle Sub role button click."""
         user = interaction.user
@@ -926,7 +926,7 @@ class AdminCommands(commands.Cog):
         await interaction.response.defer(ephemeral=False)
         
         # Validate role name - only allow specific roles
-        allowed_roles = ["default", "sub", "vip", "VTuber"]
+        allowed_roles = ["default", "subscriber", "vip", "VTuber"]
         if role_name not in allowed_roles:
             await interaction.followup.send(f"❌ Invalid role name: **{role_name}**. Allowed roles are: {', '.join(allowed_roles)}")
             return
@@ -1610,7 +1610,6 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"ERROR adding AdminCommands cog: {e}")
         
-        # Nicht existierende Cogs wurden entfernt
         try:
             await self.add_cog(RequestCommands(self))
             print("Successfully added RequestCommands cog")
@@ -1618,41 +1617,32 @@ class QuingCraftBot(commands.Bot):
             print(f"ERROR adding RequestCommands cog: {e}")
             
         try:
-            await self.add_cog(DebugCommands(self))  # Hinzugefügt, da diese Klasse existiert
+            await self.add_cog(DebugCommands(self))
             print("Successfully added DebugCommands cog")
         except Exception as e:
             print(f"ERROR adding DebugCommands cog: {e}")
         
-        # Register the commands with Discord
+        # Synchronize the command tree
         try:
-            print("Syncing commands to Discord...")
-            # Versuche zuerst die globale Synchronisierung, die weniger Berechtigungen benötigt
+            # First try global sync (requires less permissions)
+            await self.tree.sync()
+            print("Successfully synced global command tree")
+        except discord.errors.Forbidden as e:
+            print(f"WARNING: Could not sync global commands: {e}")
+            
+            # If global sync fails, try guild-specific sync
             try:
-                print("Trying global command sync first...")
-                await self.tree.sync()
-                print("Global command sync complete")
-            except Exception as global_e:
-                print(f"ERROR during global command sync: {global_e}")
-            
-            # Hole die aktuelle Guild ID
-            guild_id = os.getenv("DISCORD_GUILD_ID")
-            if guild_id:
-                try:
-                    print(f"Trying to sync to specific guild: {guild_id}")
-                    guild = discord.Object(id=int(guild_id))
-                    await self.tree.sync(guild=guild)
-                    print("Guild-specific command sync complete")
-                except Exception as guild_e:
-                    print(f"WARNING: Could not sync to guild {guild_id}: {guild_e}")
-                    print("Continuing with global commands only...")
-            
+                guild_id = int(os.getenv("DISCORD_GUILD_ID"))
+                guild = discord.Object(id=guild_id)
+                await self.tree.sync(guild=guild)
+                print(f"Successfully synced command tree with guild ID {guild_id}")
+            except Exception as guild_sync_error:
+                print(f"ERROR: Could not sync commands with guild: {guild_sync_error}")
         except Exception as e:
-            print(f"ERROR syncing commands: {e}")
-            traceback.print_exc()
-        
-        # Print the completion time
-        end_time = time.time()
-        print(f"Setup complete in {end_time - start_time:.2f} seconds!")
+            print(f"ERROR: Failed to sync command tree: {e}")
+            
+        elapsed = time.time() - start_time
+        print(f"Hook setup complete in {elapsed:.2f} seconds")
     
     async def whitelist_command_cleanup(self) -> None:
         """Clean up duplicate slash commands and re-add them."""
@@ -2419,7 +2409,7 @@ class QuingCraftBot(commands.Bot):
             print(f"[ROLE] Processing approval for {requested_role} role for {minecraft_username}")
             
             # Validate that the requested role is allowed
-            allowed_roles = ["default", "sub", "vip", "VTuber"]
+            allowed_roles = ["default", "subscriber", "vip", "VTuber"]
             if requested_role not in allowed_roles:
                 await channel.send(f"❌ Cannot approve role request: **{requested_role}** is not an allowed role. Allowed roles are: {', '.join(allowed_roles)}")
                 # Remove the approval reaction
