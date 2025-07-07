@@ -3,4 +3,10 @@ python-dotenv>=1.0.0
 psycopg2-binary>=2.9.9
 mcstatus>=10.0.0
 aiohttp>=3.9.1
-mcrcon==0.7.0 
+mcrcon==0.7.0
+pytesseract>=0.3.10
+opencv-python>=4.8.0
+Pillow>=10.0.0
+python-dateutil>=2.8.2
+pytz>=2023.3
+openai>=1.0.0 

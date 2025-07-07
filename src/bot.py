@@ -1622,6 +1622,13 @@ class QuingCraftBot(commands.Bot):
         except Exception as e:
             print(f"ERROR adding DebugCommands cog: {e}")
         
+        try:
+            from .schedule_cog import ScheduleCog
+            await self.add_cog(ScheduleCog(self))
+            print("Successfully added ScheduleCog")
+        except Exception as e:
+            print(f"ERROR adding ScheduleCog: {e}")
+        
         # Synchronize the command tree
         try:
             # First try global sync (requires less permissions)
