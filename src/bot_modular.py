@@ -39,6 +39,7 @@ class QuingCorporationBot(commands.Bot):
         # Store configuration
         self.discord_token = os.getenv("DISCORD_TOKEN")
         self.guild_id = int(os.getenv("DISCORD_GUILD_ID", "0"))
+        self.bot_nickname = os.getenv("BOT_NICKNAME")
         
         # Staff roles for permissions
         self.staff_roles = []
@@ -141,6 +142,16 @@ class QuingCorporationBot(commands.Bot):
         """Called when the client is done preparing the data received from Discord."""
         logger.info(f"🤖 Logged in as {self.user}")
         logger.info(f"🌐 Connected to {len(self.guilds)} guilds")
+        
+        # Try to set nickname if configured
+        if self.bot_nickname:
+            for guild in self.guilds:
+                try:
+                    me = guild.me
+                    await me.edit(nick=self.bot_nickname)
+                    logger.info(f"✅ Nickname changed to '{self.bot_nickname}' in guild: {guild.name}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to change nickname in guild {guild.name}: {e}")
         
         for guild in self.guilds:
             logger.info(f"   📍 {guild.name} (ID: {guild.id})")
