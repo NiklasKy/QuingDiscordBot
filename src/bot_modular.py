@@ -45,10 +45,19 @@ class QuingCorporationBot(commands.Bot):
         admin_role_id = os.getenv("ADMIN_ROLE_ID")
         mod_role_id = os.getenv("MOD_ROLE_ID")
         
+        # Handle admin role(s) - can be comma-separated
         if admin_role_id:
-            self.staff_roles.append(int(admin_role_id))
+            for role_id in admin_role_id.split(','):
+                role_id = role_id.strip()
+                if role_id:
+                    self.staff_roles.append(int(role_id))
+        
+        # Handle mod role(s) - can be comma-separated
         if mod_role_id:
-            self.staff_roles.append(int(mod_role_id))
+            for role_id in mod_role_id.split(','):
+                role_id = role_id.strip()
+                if role_id:
+                    self.staff_roles.append(int(role_id))
         
         # Feature flags
         self.features = {
