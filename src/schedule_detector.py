@@ -25,16 +25,20 @@ logger = logging.getLogger(__name__)
 class ScheduleDetector:
     """Detects and parses streaming schedules from images using GPT-4 Vision."""
     
-    def __init__(self, schedule_channel_id: int, emoji_id: str = "1234567890123456789"):
+    def __init__(self, schedule_channel_id: int, emoji_id: str = "1234567890123456789", emoji_name: str = "cassia_kurukuru", emoji_animated: bool = False):
         """
         Initialize the schedule detector.
         
         Args:
             schedule_channel_id: Discord channel ID where schedules are posted
             emoji_id: Discord emoji ID to use for schedule items
+            emoji_name: Discord emoji name to use for schedule items
+            emoji_animated: Whether the emoji is animated (True/False)
         """
         self.schedule_channel_id = schedule_channel_id
         self.emoji_id = emoji_id
+        self.emoji_name = emoji_name
+        self.emoji_animated = emoji_animated
         self.utc_tz = pytz.UTC
         
         # Initialize OpenAI client
@@ -245,7 +249,10 @@ Important:
             return message
         # Sort events by datetime
         events = sorted([e for e in events if e.get('datetime')], key=lambda x: x['datetime'])
-        emoji_tag = f"<a:cassia_kurukuru:{self.emoji_id}>"
+        if self.emoji_animated:
+            emoji_tag = f"<a:{self.emoji_name}:{self.emoji_id}>"
+        else:
+            emoji_tag = f"<:{self.emoji_name}:{self.emoji_id}>"
         for event in events:
             title = event.get('title', 'Untitled Event')
             unix_timestamp = int(event['datetime'].timestamp())

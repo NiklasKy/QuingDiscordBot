@@ -27,6 +27,8 @@ class ScheduleCog(commands.Cog):
         self.schedule_channel_id = None
         self.announcement_channel_id = None
         self.emoji_id = None
+        self.emoji_name = None
+        self.emoji_animated = None
         
         # Store pending schedule approvals
         self.pending_schedules: Dict[int, Tuple[discord.Message, str, discord.Attachment]] = {}
@@ -46,11 +48,15 @@ class ScheduleCog(commands.Cog):
             self.schedule_channel_id = int(os.getenv("SCHEDULE_CHANNEL_ID", "0"))
             self.announcement_channel_id = int(os.getenv("ANNOUNCEMENT_CHANNEL_ID", "0"))
             self.emoji_id = os.getenv("SCHEDULE_EMOJI_ID", "1234567890123456789")
+            self.emoji_name = os.getenv("SCHEDULE_EMOJI_NAME", "cassia_kurukuru")
+            self.emoji_animated = os.getenv("SCHEDULE_EMOJI_ANIMATED", "false").lower() == "true"
             
             if self.schedule_channel_id:
                 self.schedule_detector = ScheduleDetector(
                     schedule_channel_id=self.schedule_channel_id,
-                    emoji_id=self.emoji_id
+                    emoji_id=self.emoji_id,
+                    emoji_name=self.emoji_name,
+                    emoji_animated=self.emoji_animated
                 )
                 logger.info(f"Schedule detector initialized for channel {self.schedule_channel_id}")
                 if self.announcement_channel_id:
