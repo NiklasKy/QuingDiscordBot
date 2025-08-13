@@ -8,11 +8,9 @@ Diese Anleitung erklärt, wie du die Schedule Detection Funktionalität in deine
 
 Die Schedule Detection ist bereits vollständig in das Dockerfile integriert. Der Container installiert automatisch:
 
-- **Tesseract OCR** (Hauptprogramm)
-- **Tesseract OCR Eng** (Englische Sprachpakete)
-- **Tesseract OCR Deu** (Deutsche Sprachpakete)
-- **OpenCV Dependencies** (für Bildverarbeitung)
-- **Python Dependencies** (pytesseract, opencv-python, etc.)
+- **OpenAI Client Dependencies** (für GPT-4 Vision)
+- **Pillow** (Bildverarbeitung)
+- **Python Dependencies** (dotenv, aiohttp, etc.)
 
 ### Container neu bauen
 
@@ -40,6 +38,8 @@ Füge diese Variablen zu deiner `.env` Datei hinzu:
 SCHEDULE_CHANNEL_ID=your_schedule_channel_id_here
 SCHEDULE_EMOJI_ID=your_emoji_id_here
 ANNOUNCEMENT_CHANNEL_ID=your_announcement_channel_id_here
+# Optional: ping a role when posting to announcement channel
+ANNOUNCEMENT_PING_ROLE_ID=your_role_id_here
 ```
 
 ### 2. Discord Channel Setup
@@ -105,32 +105,18 @@ docker-compose logs -f quingcorporation-bot
 docker-compose logs quingcorporation-bot | grep -i schedule
 ```
 
-### Tesseract im Container testen
-
-```bash
-# Container betreten
-docker-compose exec quingcorporation-bot bash
-
-# Tesseract testen
-tesseract --version
-
-# Python-Integration testen
-python -c "import pytesseract; print('Tesseract verfügbar')"
-```
-
 ### Häufige Probleme
 
-1. **"Tesseract not found"**
-   - Container neu bauen: `docker-compose build --no-cache`
-   - Prüfe Container-Logs auf Installationsfehler
+1. **"OPENAI_API_KEY missing"**
+   - `.env` prüfen und Key setzen
+   - Container neu starten
 
-2. **"No text extracted"**
-   - Prüfe Bildqualität und Kontrast
-   - Stelle sicher, dass das Bild im richtigen Channel gepostet wurde
+2. **"No events extracted"**
+   - Bildqualität/Lesbarkeit prüfen
+   - Logs für XML-Ausgabe prüfen
 
-3. **"Could not parse date range"**
-   - Prüfe das Datumsformat im Bild
-   - Unterstützte Formate: "30 June - 06 July", "30/06 - 06/07"
+3. **"Rate limit"**
+   - OpenAI Account Usage prüfen oder später erneut versuchen
 
 4. **"Announcement channel not found"**
    - Prüfe ANNOUNCEMENT_CHANNEL_ID in .env
@@ -227,8 +213,7 @@ Schedule discarded
 
 ## 📈 Performance
 
-- OCR-Verarbeitung dauert 2-5 Sekunden pro Bild
-- Große Bilder werden automatisch für die Verarbeitung angepasst
+- GPT-4 Vision Verarbeitung dauert typischerweise 2-5 Sekunden pro Bild
 - Mehrere Bilder in einer Nachricht werden sequenziell verarbeitet
 - Fehlgeschlagene Verarbeitungsversuche werden für Debugging protokolliert
-- Pending Schedules werden im Speicher gehalten bis zur Entscheidung 
+- Pending Schedules werden im Speicher gehalten bis zur Entscheidung

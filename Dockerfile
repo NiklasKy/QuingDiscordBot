@@ -2,13 +2,9 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies including Tesseract OCR
+# Install minimal system dependencies (no Tesseract/OCR needed)
 RUN apt-get update && apt-get install -y \
     gcc \
-    tesseract-ocr \
-    tesseract-ocr-eng \
-    tesseract-ocr-deu \
-    libgl1-mesa-glx \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -28,4 +24,4 @@ RUN useradd -m botuser && chown -R botuser:botuser /app
 USER botuser
 
 # Start the modular bot
-CMD ["python", "-m", "src.bot_modular"] 
+CMD ["python", "-m", "src.bot_modular"]

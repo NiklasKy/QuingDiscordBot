@@ -34,7 +34,7 @@ cd quingcorporation-bot
 
 2. **AI-powered Schedule Detection is automatically included in Docker!**
    - GPT-4 Vision API integration ist bereits konfiguriert
-   - Alle Dependencies sind bereits installiert
+   - Alle benötigten Dependencies (ohne Tesseract/OCR) sind bereits installiert
 
 3. Copy `.env.example` to `.env` and fill in your configuration:
 ```bash
@@ -49,6 +49,7 @@ cp .env.example .env
 - Database credentials
 - **NEW: OpenAI API Key (required for schedule detection)**
 - **NEW: Schedule Channel ID, Emoji ID, and Announcement Channel ID**
+ - Optional: `ANNOUNCEMENT_PING_ROLE_ID` to mention a role on schedule posts
 
 5. Build and start the containers:
 ```bash

@@ -91,35 +91,8 @@ def test_schedule_detector():
     test_image.save(test_image_path)
     print(f"Test image saved as: {test_image_path}")
     
-    # Test OCR text extraction
-    print("\nTesting OCR text extraction...")
-    text = detector.extract_text_from_image(test_image)
-    print(f"Extracted text:\n{text}")
-    
-    # Test date range parsing
-    print("\nTesting date range parsing...")
-    date_range = detector.parse_date_range(text)
-    if date_range:
-        start_date, end_date = date_range
-        print(f"Parsed date range: {start_date.date()} to {end_date.date()}")
-    else:
-        print("Failed to parse date range")
-        return False
-    
-    # Test event extraction
-    print("\nTesting event extraction...")
-    events = detector.extract_schedule_events(text, date_range[0])
-    print(f"Found {len(events)} events:")
-    for event in events:
-        print(f"  - {event['title']} at {event['datetime']}")
-    
-    # Test message generation
-    print("\nTesting message generation...")
-    message = detector.generate_discord_message(date_range, events)
-    print("Generated Discord message:")
-    print("=" * 50)
-    print(message)
-    print("=" * 50)
+    # Legacy OCR pipeline not used anymore; skipping to full processing
+    print("\nSkipping legacy OCR pipeline tests (pytesseract/opencv)")
     
     # Test full processing
     print("\nTesting full processing...")
@@ -166,13 +139,12 @@ def main():
     if success:
         print("\n✅ All tests passed!")
         print("\nTo use this feature:")
-        print("1. Install Tesseract OCR (see install-tesseract.ps1)")
-        print("2. Set SCHEDULE_CHANNEL_ID and SCHEDULE_EMOJI_ID in .env")
-        print("3. Restart the bot")
-        print("4. Post schedule images in the configured channel")
+        print("1. Set SCHEDULE_CHANNEL_ID and SCHEDULE_EMOJI_ID in .env")
+        print("2. Restart the bot")
+        print("3. Post schedule images in the configured channel")
     else:
         print("\n❌ Some tests failed!")
-        print("Check that Tesseract OCR is properly installed.")
+        print("Check configuration and OpenAI API availability.")
     
     # Clean up test file
     if os.path.exists("test_schedule.png"):

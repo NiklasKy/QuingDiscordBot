@@ -17,27 +17,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'src'))
 from schedule_detector import ScheduleDetector
 
 def test_tesseract_installation():
-    """Test if Tesseract is properly installed in the container."""
-    print("=== Testing Tesseract Installation ===")
-    
-    try:
-        import pytesseract
-        
-        # Test basic import
-        print("✓ pytesseract imported successfully")
-        
-        # Test Tesseract version
-        try:
-            version = pytesseract.get_tesseract_version()
-            print(f"✓ Tesseract version: {version}")
-            return True
-        except Exception as e:
-            print(f"✗ Could not get Tesseract version: {e}")
-            return False
-            
-    except ImportError as e:
-        print(f"✗ Failed to import pytesseract: {e}")
-        return False
+    """Deprecated: No longer using Tesseract."""
+    print("=== Skipping Tesseract Installation Test (no longer required) ===")
+    return True
 
 def create_test_schedule_image():
     """Create a test schedule image for testing."""
@@ -94,17 +76,9 @@ def create_test_schedule_image():
     return image
 
 def test_opencv_installation():
-    """Test if OpenCV is properly installed."""
-    print("\n=== Testing OpenCV Installation ===")
-    
-    try:
-        import cv2
-        version = cv2.__version__
-        print(f"✓ OpenCV version: {version}")
-        return True
-    except ImportError as e:
-        print(f"✗ Failed to import OpenCV: {e}")
-        return False
+    """Deprecated: No longer using OpenCV."""
+    print("\n=== Skipping OpenCV Installation Test (no longer required) ===")
+    return True
 
 def test_schedule_detector():
     """Test the schedule detector functionality."""
@@ -117,43 +91,8 @@ def test_schedule_detector():
     print("Creating test schedule image...")
     test_image = create_test_schedule_image()
     
-    # Test OCR text extraction
-    print("Testing OCR text extraction...")
-    text = detector.extract_text_from_image(test_image)
-    print(f"Extracted text:\n{text}")
-    
-    if not text.strip():
-        print("✗ No text extracted from image")
-        return False
-    
-    # Test date range parsing
-    print("\nTesting date range parsing...")
-    date_range = detector.parse_date_range(text)
-    if date_range:
-        start_date, end_date = date_range
-        print(f"✓ Parsed date range: {start_date.date()} to {end_date.date()}")
-    else:
-        print("✗ Failed to parse date range")
-        return False
-    
-    # Test event extraction
-    print("\nTesting event extraction...")
-    events = detector.extract_schedule_events(text, date_range[0])
-    print(f"Found {len(events)} events:")
-    for event in events:
-        print(f"  - {event['title']} at {event['datetime']}")
-    
-    if not events:
-        print("✗ No events found")
-        return False
-    
-    # Test message generation
-    print("\nTesting message generation...")
-    message = detector.generate_discord_message(date_range, events)
-    print("Generated Discord message:")
-    print("=" * 50)
-    print(message)
-    print("=" * 50)
+    # Since GPT-4 Vision is used, skip legacy OCR pipeline tests
+    print("Skipping legacy OCR pipeline tests (pytesseract/opencv)")
     
     # Test full processing
     print("\nTesting full processing...")
@@ -213,8 +152,8 @@ def main():
     # Summary
     print("\n" + "=" * 60)
     print("TEST SUMMARY:")
-    print(f"Tesseract Installation: {'✓' if tesseract_ok else '✗'}")
-    print(f"OpenCV Installation: {'✓' if opencv_ok else '✗'}")
+    print(f"Tesseract Installation: skipped")
+    print(f"OpenCV Installation: skipped")
     print(f"Time Parsing: {'✓' if time_parsing_ok else '✗'}")
     print(f"Schedule Detection: {'✓' if schedule_ok else '✗'}")
     

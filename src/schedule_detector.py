@@ -146,7 +146,7 @@ Important:
             logger.error(f"Error extracting schedule with GPT-4 Vision: {e}")
             return None
     
-    def parse_xml_schedule(self, xml_content: str) -> Optional[Tuple[datetime, datetime, List[Dict]]]:
+    def parse_xml_schedule(self, xml_content: str, week_offset: int = 0) -> Optional[Tuple[datetime, datetime, List[Dict]]]:
         """
         Parse the XML content from GPT-4 Vision and extract schedule data.
         Nach dem Parsen: Setze Date-Range und alle Event-Daten auf die aktuelle Woche (Montag–Sonntag) im aktuellen Jahr.
@@ -155,11 +155,11 @@ Important:
             # Parse XML
             root = ET.fromstring(xml_content)
             
-            # Calculate current week's Monday and Sunday
+            # Calculate selected week's Monday and Sunday (week_offset: 0=current, 1=next, ...)
             today = datetime.now(self.utc_tz)
             current_monday = today - timedelta(days=today.weekday())
-            current_sunday = current_monday + timedelta(days=6)
-            current_year = today.year
+            base_monday = current_monday + timedelta(days=7 * week_offset)
+            base_sunday = base_monday + timedelta(days=6)
             
             # Mapping for weekday names to offset
             weekday_map = {
@@ -172,9 +172,9 @@ Important:
                 'sunday': 6, 'sun': 6,
             }
             
-            # Set date range to current week (ignore what GPT-4o says)
-            start_date = current_monday.replace(hour=0, minute=0, second=0, microsecond=0)
-            end_date = current_sunday.replace(hour=23, minute=59, second=59, microsecond=0)
+            # Set date range to selected week (ignore what GPT-4o says)
+            start_date = base_monday.replace(hour=0, minute=0, second=0, microsecond=0)
+            end_date = base_sunday.replace(hour=23, minute=59, second=59, microsecond=0)
             
             # Extract events
             events = []
@@ -198,12 +198,12 @@ Important:
                         event['title'] = title_elem.text
                     if desc_elem is not None:
                         event['description'] = desc_elem.text
-                    # Set event date: aktueller Montag + Offset für Wochentag
+                    # Set event date: base Monday + offset for weekday
                     if 'day' in event and event['day']:
                         day_lc = event['day'].strip().lower()
                         offset = weekday_map.get(day_lc, None)
                         if offset is not None:
-                            event_date = (current_monday + timedelta(days=offset)).date()
+                            event_date = (base_monday + timedelta(days=offset)).date()
                             event['date'] = event_date
                     # Create full datetime
                     if 'date' in event and 'time' in event:
@@ -226,11 +226,35 @@ Important:
                         except Exception as e:
                             logger.warning(f"Could not parse datetime for event: {event} ({e})")
                     events.append(event)
-            logger.info(f"Parsed {len(events)} events from XML (all dates set to current week)")
+            logger.info(f"Parsed {len(events)} events from XML (dates set with week_offset={week_offset})")
             return start_date, end_date, events
         except Exception as e:
             logger.error(f"Error parsing XML schedule: {e}")
             return None
+
+    def rebuild_event_datetime(self, event: Dict) -> None:
+        """
+        Rebuild the UTC datetime for a single event in-place using its 'date', 'time', and optional 'timezone'.
+        Expects 'date' (date object) and 'time' (HH:MM) to be present.
+        """
+        try:
+            if 'date' in event and 'time' in event and event['date'] and event['time']:
+                event_datetime = datetime.combine(
+                    event['date'],
+                    datetime.strptime(event['time'], '%H:%M').time()
+                )
+                if 'timezone' in event and event['timezone'] and event['timezone'] != 'UTC':
+                    try:
+                        tz = pytz.timezone(event['timezone'])
+                        event_datetime = tz.localize(event_datetime)
+                        event_datetime = event_datetime.astimezone(self.utc_tz)
+                    except Exception:
+                        event_datetime = self.utc_tz.localize(event_datetime)
+                else:
+                    event_datetime = self.utc_tz.localize(event_datetime)
+                event['datetime'] = event_datetime
+        except Exception as e:
+            logger.warning(f"Failed to rebuild datetime for event {event}: {e}")
     
     def generate_discord_message(self, date_range: Tuple[datetime, datetime], events: List[Dict]) -> str:
         """
