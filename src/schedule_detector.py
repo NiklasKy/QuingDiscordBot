@@ -127,20 +127,19 @@ Important:
             logger.info(f"[GPT-4 Vision] Extracted XML:\n{xml_content}")
             
             # Clean XML content - remove markdown code blocks if present
-            if xml_content.startswith('```'):
-                # Remove opening ```xml or ``` and closing ```
-                lines = xml_content.split('\n')
-                cleaned_lines = []
-                in_xml = False
-                for line in lines:
-                    if line.strip().startswith('```'):
-                        if not in_xml:
-                            in_xml = True
-                        else:
-                            break
-                    elif in_xml:
-                        cleaned_lines.append(line)
-                xml_content = '\n'.join(cleaned_lines).strip()
+            if '```' in xml_content:
+                # Remove markdown code blocks more robustly
+                # Find content between first ``` and last ```
+                start_idx = xml_content.find('```')
+                if start_idx != -1:
+                    # Skip the opening ``` line (could be ```xml or just ```)
+                    start_idx = xml_content.find('\n', start_idx)
+                    if start_idx != -1:
+                        start_idx += 1  # Skip the newline
+                        # Find the closing ```
+                        end_idx = xml_content.rfind('```')
+                        if end_idx != -1 and end_idx > start_idx:
+                            xml_content = xml_content[start_idx:end_idx].strip()
 
             # Basic sanitation: replace stray ampersands that would break XML
             # Convert '&' not followed by a valid entity into '&amp;'
