@@ -69,7 +69,8 @@ class ScheduleDetector:
             image_base64 = self.image_to_base64(image)
             
             # Create the prompt for GPT-4 Vision
-            prompt = """Analyze this streaming schedule image and extract all events. Return the data as XML in the following format:
+            prompt = """Analyze this streaming schedule image and extract all events. Return the data as XML in the following format.
+Always return VALID XML only (no markdown fences). Escape special characters in text like '&' as '&amp;'.
 
 <schedule>
   <date_range>
@@ -95,7 +96,8 @@ Important:
 - Use UTC timezone if not specified
 - If time is in a different timezone, convert to UTC
 - Only include events that have a clear time and title
-- If no events are found, return empty <events></events>"""
+- If no events are found, return empty <events></events>
+- Do not wrap the XML in code blocks and ensure the XML is well-formed."""
 
             # Call GPT-4 Vision API
             response = self.client.chat.completions.create(
@@ -139,6 +141,10 @@ Important:
                     elif in_xml:
                         cleaned_lines.append(line)
                 xml_content = '\n'.join(cleaned_lines).strip()
+
+            # Basic sanitation: replace stray ampersands that would break XML
+            # Convert '&' not followed by a valid entity into '&amp;'
+            xml_content = re.sub(r'&(?!amp;|lt;|gt;|quot;|apos;|#\d+;)', '&amp;', xml_content)
             
             return xml_content
             
